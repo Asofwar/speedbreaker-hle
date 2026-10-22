@@ -140,6 +140,8 @@ float xmul(float a, float b)
 
             // Previous vfetch_full, for vfetch_mini.
             VertexFetchInstruction lastFullFetch{};
+            // r0 (a vertex shader's incoming vertex index) written so far.
+            bool r0Written = false;
 
             void Error(const std::string& message)
             {
@@ -456,6 +458,9 @@ float xmul(float a, float b)
                 }
                 else
                 {
+                    if ((vecMask && (op.vector_dest() == 0 || op.is_vector_dest_relative())) ||
+                        (scaMask && (op.scalar_dest() == 0 || op.is_scalar_dest_relative())))
+                        r0Written = true;
                     if (vecMask)
                     {
                         std::string dst = Reg(op.vector_dest(), op.is_vector_dest_relative());
@@ -483,6 +488,8 @@ float xmul(float a, float b)
             // Destination swizzle for fetches: 3 bits per component.
             void StoreFetchResult(uint32_t dest, bool destRelative, uint32_t swizzle, const std::string& value)
             {
+                if (dest == 0 || destRelative)
+                    r0Written = true;
                 std::string dst = Reg(dest, destRelative);
                 for (uint32_t c = 0; c < 4; c++)
                 {
@@ -502,6 +509,15 @@ float xmul(float a, float b)
                 uint32_t slot = full.fetch_constant_index();  // 0..95 (3 per 6-dword slot)
                 out.vertexFetchMask |= 1u << (slot / 3);
                 out.vertexFetchConstants[slot / 32] |= 1u << (slot % 32);
+                // The vertices this fetch reads (see vertexStride).
+                if (stage != ShaderStage::Vertex || full.src() != 0 || full.is_src_relative() || (full.src_swizzle() & 3) != 0 || r0Written ||
+                    op.offset() < 0 || op.offset() > 251)
+                    out.vertexIndexOther[slot / 32] |= 1u << (slot % 32);
+                else
+                {
+                    out.vertexStride[slot] = uint8_t(std::max<uint32_t>(out.vertexStride[slot], full.stride()));
+                    out.vertexExtent[slot] = uint8_t(std::max<int32_t>(out.vertexExtent[slot], op.offset() + 4));
+                }
 
                 if (op.is_predicated())
                 {

@@ -39,6 +39,10 @@ from you.
    what happened, and roughly how long into the session (the logs count
    seconds from launch).
 
+With **Smooth Motion** on (Settings > Display, on a Mac's 120 Hz screen), say so, and for a picture
+problem whether it showed in a race, a cutscene or a menu: the log records each step between full
+in-between pictures, lighter ones and 60 ("[hfr]" lines), and when.
+
 If the game **crashed**, just launch it again: it says it saved a crash
 report, and the next Save Bug Report includes it.
 

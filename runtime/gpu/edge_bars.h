@@ -43,7 +43,9 @@
 // Two pictures the front end draws just short of the 16:9 frame's edges
 // get the screen's edges instead, on every screen shape: around the results
 // screen's backdrop the rows are cleared to black (PlanBackdrop), and the
-// Showcase's vignette is stretched to the screen's edges (PlanVignette).
+// Showcase's vignette is stretched to the screen's edges (PlanVignette); so
+// is a flat full-screen layer that stops short of them (the fade to black
+// before a load: PlanLayer).
 //
 // Units: the frame's clip space after the front-end matrix (w = 1), and
 // "band units" = clip / view scale (x / scaleX, y / scaleY): +-1 are the
@@ -509,14 +511,14 @@ namespace gpu::bars
         Rect scissor{};               // the draw's scissor (host pixels)
     };
 
-    enum class Fill : uint8_t { None, LeftBar, RightBar, Blackout, Backdrop, Vignette };
+    enum class Fill : uint8_t { None, LeftBar, RightBar, Blackout, Backdrop, Vignette, Layer };
 
     // What to draw after the draw: for a bar or a black frame, `rectCount`
     // more copies of it (none for a bar that reaches the screen edge), with
     // `posScale` and each rectangle as the scissor; for a backdrop, each
     // rectangle cleared to opaque black (its picture must not be copied);
-    // for a vignette, nothing after it: the draw itself is drawn with
-    // `posScale` instead of its own (no rectangles).
+    // for a vignette or a layer, nothing after it: the draw itself is drawn
+    // with `posScale` instead of its own (no rectangles).
     struct Plan
     {
         Fill fill = Fill::None;
@@ -724,6 +726,100 @@ namespace gpu::bars
                 return p;
         }
         p.fill = Fill::Vignette;
+        p.box = box;
+        p.argb = v[0].argb;
+        CoverFrame(box, d.posScale, p.posScale);
+        return p;
+    }
+
+    // A full-screen layer short of the screen's edges: the fade to black
+    // before a load (FB000000 at its darkest, x +-1.121 and y +-0.972 of the
+    // 16:9 band: the career's EndingNis03 into the storyfmv_pin11 movie, the
+    // last prologue race's, and the loads round the career's races) and the
+    // dim over the loading screen (B8000000, x +-1.104, y -0.978..0.985):
+    // one front-end quad of one colour (any alpha: it fades), over the game's
+    // 32x32 white texture, centred in the band and covering 95% of it or more
+    // each way, but short of the screen's edge in x or y. On a 16:9 screen a
+    // thin strip of the scene shows at its top and bottom (10 rows of 720;
+    // a 360's own output has it, a period TV's overscan hid it); under Vert+
+    // the scene rendered above and below the band shows too (6.4% of a
+    // MacBook's height at each end, a black box over the middle of the
+    // picture for the fade's ~1.5 s), under Hor+ beside it (x +-1.121 of the
+    // band ends 17% short of a 21:9 screen's sides). None of the other rules
+    // takes it: the widen rule wants +-1.2 of the band (the fades and dims at
+    // +-1.29), the black frame rule 0.90..0.99 (and alpha F0 or more), the
+    // cover rule both band edges. The quad is stretched to the screen's
+    // edges (its box to +-kFillEdge: CoverFrame), on every screen shape, 16:9
+    // too (the period TV's look, as the results screen's overscan rows and
+    // the Showcase's vignette). It is flat, so nothing is distorted. The
+    // nearest draws it must not take: the intro's black frames (x +-0.970:
+    // the black frame rule's), the Blacklist bio's panel (0.976 x 0.985, the
+    // black frame rule's once opaque; during its fade-in this takes it, so
+    // its border no longer shows then either), the title's key art and the
+    // results picture (x +-1.104 but textured), the vid cam's overlays (x
+    // +-0.70) and dialog boxes (x +-0.58), the pause dim's side gradients
+    // (alpha varying across them), and any layer already past the screen's
+    // edges (nothing short to stretch).
+    struct LayerRule
+    {
+        float centreMax = 0.01f;       // |the box's centre|, each axis, band units
+        float extentMin = 0.95f;       // half its width and half its height, band units
+        float shortMin = 1e-3f;        // band units short of the screen's edge (1/scale) that count
+        float cornerTolerance = 1e-3f;  // clip units, as Rule's
+    };
+
+    inline bool MatchLayer(const Vertex v[4], float scaleX, float scaleY, const LayerRule& rule = {}, Box* box = nullptr)
+    {
+        if (!(scaleX > 0.0f && scaleY > 0.0f))
+            return false;
+        for (int i = 1; i < 4; i++)
+            if (v[i].argb != v[0].argb)
+                return false;
+        Box b;
+        if (!RectangleBox(v, rule.cornerTolerance, b))
+            return false;
+        const float midX = (b.x0 + b.x1) * 0.5f / scaleX, midY = (b.y0 + b.y1) * 0.5f / scaleY;
+        const float halfX = (b.x1 - b.x0) * 0.5f / scaleX, halfY = (b.y1 - b.y0) * 0.5f / scaleY;
+        if (!(std::fabs(midX) <= rule.centreMax && std::fabs(midY) <= rule.centreMax))
+            return false;
+        if (!(halfX >= rule.extentMin && halfY >= rule.extentMin))
+            return false;
+        // Its nearer reach in each axis against the screen's edge (clip 1 =
+        // 1/scale band units).
+        const float reachX = std::min(-b.x0, b.x1), reachY = std::min(-b.y0, b.y1);
+        if (!(reachX < 1.0f - rule.shortMin * scaleX || reachY < 1.0f - rule.shortMin * scaleY))
+            return false;
+        if (box)
+            *box = b;
+        return true;
+    }
+
+    // The plan for a layer: the draw's posScale stretched so its box reaches
+    // past every screen edge (CoverFrame), no rectangles. Candidate's
+    // register checks (one quad, the front-end shader, left alone by the
+    // other rules, alpha-blended or opaque, over the 32x32 white texture).
+    template <class ReadWord>
+    Plan PlanLayer(const Draw& d, ReadWord&& read, const LayerRule& rule = {})
+    {
+        Plan p;
+        if (!Candidate(d))
+            return p;
+        const float* c = d.c;
+        Vertex v[4];
+        for (uint32_t k = 0; k < 4; k++)
+        {
+            uint32_t w[4];
+            for (uint32_t j = 0; j < 4; j++)
+                if (!read(k, j, w[j]))
+                    return p;
+            float q[3];
+            std::memcpy(q, w, sizeof(q));
+            v[k] = { q[0] * c[0] + q[1] * c[1] + q[2] * c[2] + c[3], q[0] * c[4] + q[1] * c[5] + q[2] * c[6] + c[7], w[3] };
+        }
+        Box box{};
+        if (!MatchLayer(v, d.scaleX, d.scaleY, rule, &box))
+            return p;
+        p.fill = Fill::Layer;
         p.box = box;
         p.argb = v[0].argb;
         CoverFrame(box, d.posScale, p.posScale);

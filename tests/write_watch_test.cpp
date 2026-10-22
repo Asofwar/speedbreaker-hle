@@ -6,12 +6,13 @@
 //     -Itools/XenonRecomp/XenonUtils -Itools/XenonRecomp/thirdparty/simde tests/write_watch_test.cpp
 //     runtime/kernel/write_watch.cpp runtime/cpu/guest_time.cpp -o build/write_watch_test
 //   build/write_watch_test
-// Started without NFSMW_WATCH_SUBPAGES (whose default differs by platform),
-// it runs itself with it at 0 (a write fault marks every guest page of its
-// host page, as before) and at 1 (in use only where host pages are over 4 KB:
-// a 4 KB host, where a host page is a guest page, checks the old rule both
-// times); with it set, it runs once. Physical memory
-// is mapped as the runtime maps it (three windows of one shared object), and
+// Started without NFSMW_WATCH_SUBPAGES, it checks the default (in use where
+// host pages are over 4 KB, never on 4 KB hosts), then runs itself with it at
+// 0 (a write fault marks every guest page of its host page, as before) and at
+// 1 (in use only where host pages are over 4 KB: a 4 KB host, where a host
+// page is a guest page, checks the old rule both times); with it set, it runs
+// once. Physical memory is mapped as the runtime maps it (three windows of one
+// shared object), and
 // SIGSEGV and SIGBUS go to HandleFault as main.cpp sends them. Under a second.
 #include <stdafx.h>
 #include <kernel/write_watch.h>
@@ -717,9 +718,21 @@ int main(int, char** argv)
     writewatch::Initialize();
     if (std::getenv("NFSMW_WATCH_SUBPAGES"))
         return Run();
+    // Unset, it is in use exactly where a host page holds 2 to 32 guest pages
+    // (16 KB on Apple and some Android and Linux hosts), never on 4 KB ones.
+    int result = 0;
+    bool wanted = s_hostPage > kGuestPage && s_hostPage <= 32 * kGuestPage;
+    printf("host pages %zu KB, NFSMW_WATCH_SUBPAGES unset: %s by default\n", s_hostPage / 1024,
+        Stats().subpages ? "in use" : "not in use");
+    if (Stats().subpages != wanted)
+    {
+        printf("  FAIL: by default it should be %s on %zu KB host pages\n", wanted ? "in use" : "off", s_hostPage / 1024);
+        result = 1;
+    }
+    printf("\n");
+    fflush(stdout);
     // Off and on, each in a process of its own (the variable is read once, at
     // static initialization).
-    int result = 0;
     for (const char* value : { "0", "1" })
     {
         setenv("NFSMW_WATCH_SUBPAGES", value, 1);

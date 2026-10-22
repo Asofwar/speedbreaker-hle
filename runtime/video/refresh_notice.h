@@ -71,6 +71,7 @@ namespace video
             double movieQuietSec = 1e9; // since the last movie frame (the XMV player's)
             double idleSec = 0;         // since the controls were last used
             bool uiBusy = false;        // a panel or the settings menu is open
+            bool hfrHandles = false;    // HFR (NFSMW_HFR=1) draws a picture for each of this grid's refreshes
         };
         enum class Verdict
         {
@@ -101,6 +102,8 @@ namespace video
                 return { Verdict::NotApplicable, "" };
             if (in.forced == 0)
                 return { Verdict::Never, "NFSMW_REFRESH_NOTICE=0" };
+            if (in.hfrHandles && in.forced != 1)
+                return { Verdict::Never, "HFR draws a picture for each refresh (NFSMW_HFR=1)" };
             if (in.platform == Platform::Excluded)
                 return { Verdict::Never, "not on this device (iOS, or a headset's compositor)" };
             if (in.shownBefore && in.forced != 1)

@@ -37,6 +37,17 @@ namespace gpu
         bool usesMemExport = false;
         uint32_t vertexFetchMask = 0;    // fetch constant slots used by vfetch (x3 dwords... slot = const index)
         uint32_t vertexFetchConstants[3] = {};  // the vertex fetch constants (0..95) vfetch reads
+        // Per vertex fetch constant (0..95), for a vertex shader: the largest
+        // dword stride its vfetches use, and the furthest dword past a
+        // vertex's start they read (offset + 4); vertexIndexOther marks the
+        // constants some vfetch of which doesn't index by the vertex index as
+        // it comes in (r0.x, before anything writes r0), a negative offset, or
+        // a pixel shader's. The others read only the draw's vertices' records:
+        // the renderer copies or guards just those (HFR M3: the dynamic
+        // buffers' other slots stay writable).
+        uint8_t vertexStride[96] = {};
+        uint8_t vertexExtent[96] = {};
+        uint32_t vertexIndexOther[3] = {};
         uint32_t texture2DMask = 0;      // texture fetch slots used, by dimension
         uint32_t texture3DMask = 0;
         uint32_t textureCubeMask = 0;

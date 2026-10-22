@@ -1,6 +1,7 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING).
 // PM4 packet semantics follow Xenia (gpu/command_processor.cc, BSD license).
 #include <stdafx.h>
+#include <game/hfr.h>
 #include "command_processor.h"
 
 #include <kernel/vmem.h>
@@ -495,15 +496,43 @@ namespace gpu
                 r.Read();  // 'SWAP'
                 r.Read();  // front buffer (physical); also in the fetch constant
                 uint32_t width = r.Read(), height = r.Read();
-                r.Skip(count - 4);
+                // An in-between picture (game/hfr.h): 'HFRB' and its fraction of the
+                // step; a step drawn only between: 'HFRR' and its own picture's.
+                float between = 0.0f, shift = 0.0f;
+                int64_t target = 0;  // the refresh it is for, on a grid that isn't a multiple of 60 Hz
+                if (count >= 6)
+                {
+                    const uint32_t marker = r.Read(), bits = r.Read();
+                    float f = 0.0f;
+                    memcpy(&f, &bits, 4);
+                    if (marker == 0x48465242)
+                        between = f;
+                    else if (marker == 0x48465252 && f > 0.0f && f < 1.0f)
+                        shift = f - 1.0f;
+                    if (count >= 8)
+                    {
+                        const uint64_t hi = r.Read(), lo = r.Read();
+                        target = int64_t((hi << 32) | lo);
+                        r.Skip(count - 8);
+                    }
+                    else
+                        r.Skip(count - 6);
+                }
+                else
+                    r.Skip(count - 4);
                 // VdSwap wrote the front buffer's fetch constant into fetch slot 0.
                 // Presented from the GPU without waiting; frame dumps (and the
-                // headless case) take the CPU path, which needs the GPU idle.
+                // headless case) take the CPU path, which needs the GPU idle
+                // (and shows no in-between pictures).
                 static const bool dumping = std::getenv("NFSMW_DUMP_FRAMES") != nullptr;
-                if (dumping || !renderer::PresentFrontBuffer(&s_regs[0x4800], width, height))
+                hfr::NoteSwap(between);
+                if (dumping || !renderer::PresentFrontBuffer(&s_regs[0x4800], width, height, between, shift, target))
                 {
-                    renderer::Flush();
-                    video::SubmitFrontBuffer(&s_regs[0x4800], width, height);
+                    if (between == 0.0f)
+                    {
+                        renderer::Flush();
+                        video::SubmitFrontBuffer(&s_regs[0x4800], width, height);
+                    }
                 }
                 s_counter++;
                 timeline::Mark(timeline::Swap);
@@ -521,6 +550,40 @@ namespace gpu
                 static int64_t lastSwap = guesttime::NowNs();
                 static int64_t overlayTime = guesttime::NowNs();  // the last 30-swap mark
                 static double worstMs = 0;
+                // HFR (M3): this picture's own cost, in-between and real apart.
+                if (hfr::Enabled())
+                {
+                    static uint64_t pictureCpNs = 0, pictureDraws = 0, picturePasses = 0;
+                    AccountBusy();
+                    const uint64_t passes = renderer::GetStats().passes, draws = s_draws.load();
+                    if (pictureCpNs)
+                        hfr::NotePictureCost(between != 0.0f, double(renderer::g_cpBusyNs - pictureCpNs) / 1e6, draws - pictureDraws,
+                            passes - picturePasses);
+                    pictureCpNs = renderer::g_cpBusyNs;
+                    pictureDraws = draws;
+                    picturePasses = passes;
+                }
+                // HFR's load check (game/hfr.cpp): the command processor's
+                // and the GPU's time since the last real picture's swap.
+                {
+                    static uint64_t lastCpNs = 0, lastGpuUs = 0;
+                    static bool hadBetween = false;
+                    if (between != 0.0f)
+                        hadBetween = true;
+                    else
+                    {
+                        AccountBusy();
+                        const auto st = renderer::GetStats();
+                        const uint64_t gpuUs = st.gpuExecUs;  // execution only (0 without timestamps: the CP's time alone)
+                        if (lastCpNs)
+                            hfr::NoteFrameCost(double(renderer::g_cpBusyNs - lastCpNs) / 1e6, double(gpuUs - lastGpuUs) / 1e3, hadBetween);
+                        lastCpNs = renderer::g_cpBusyNs;
+                        lastGpuUs = gpuUs;
+                        hadBetween = false;
+                    }
+                }
+                // Game frames: an in-between picture's swap isn't one (its frame is the real picture's).
+                if (between == 0.0f)
                 {
                     AccountBusy();
                     int64_t swapNow = guesttime::NowNs();

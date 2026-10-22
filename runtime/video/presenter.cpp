@@ -10,8 +10,12 @@
 #include <gpu/renderer.h>
 #include <game/ultrawide.h>
 #include <game/movie_pacing.h>
+#include <game/cover_callers.h>
+#include <gpu/covers.h>
 #include "gpu_choice.h"
 #include "present_schedule.h"
+#include "hfr_schedule.h"
+#include <game/hfr.h>
 #include "swapchain_use.h"
 #include "picture_fit.h"
 #include "frame_rate.h"
@@ -42,6 +46,11 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <format>
+#include <iterator>
+#include <unordered_set>
 #include <condition_variable>
 #include <deque>
 #include <fstream>
@@ -147,6 +156,18 @@ namespace video
         // an earlier queue submission).
         VkImage s_pendingImage = VK_NULL_HANDLE;
         int64_t s_pendingVblank = 0;  // the guest vblank the frame followed
+        float s_pendingShift = 0.0f;  // shown that much of a vblank early (game/hfr.h: a step's own picture drawn between)
+        int64_t s_pendingTarget = 0;  // when to show it (game/hfr.h on a grid that isn't a multiple of 60 Hz; 0: the usual way)
+        // An in-between picture (game/hfr.h: drawn between two world steps,
+        // presented before the real picture of the later one) from the
+        // renderer, with its fraction of the step; shown before s_pending*.
+        VkImage s_betweenImage = VK_NULL_HANDLE;
+        uint32_t s_betweenWidth = 0, s_betweenHeight = 0, s_betweenAspectW = 0, s_betweenAspectH = 0;
+        int64_t s_betweenVblank = 0;  // the guest vblank before it
+        float s_betweenT = 0.0f;
+        int64_t s_betweenTarget = 0;
+        bool s_betweenNew = false;
+        std::atomic<uint64_t> s_betweenDropped{ 0 }, s_betweenShown{ 0 }, s_betweenPresented{ 0 };
         std::atomic<uint64_t> s_dropped{ 0 };  // frames replaced here before they were shown
         std::atomic<uint64_t> s_repeated{ 0 }, s_shown{ 0 };  // see PresentStats
         std::atomic<int64_t> s_guestVblank{ 0 };
@@ -295,6 +316,8 @@ namespace video
             int64_t presented;  // vkQueuePresentKHR (ns, steady clock)
             int64_t vblank;     // a new game frame: the guest vblank it followed; 0: a redraw
             int64_t ready;      // ready to present (= presented, but for a frame held for its refresh: VblankLock::PresentAt)
+            float between = 0;  // an in-between picture's fraction of the step (game/hfr.h; its vblank is 0)
+            int64_t desired = 0;  // macOS: the time it was asked to be shown at (0: when ready)
         };
         // Never destroyed: the waiter is detached and blocks on them, and
         // glibc's pthread_cond_destroy waits for blocked waiters, so an exit
@@ -318,6 +341,11 @@ namespace video
         // present completions at it, since when (ns, steady clock; 0: not).
         std::atomic<double> s_gridHz{ 0.0 };
         std::atomic<int64_t> s_gridFixedSince{ 0 };
+        // The grid check's fit, for HFR (HfrGrid): valid, period, a refresh.
+        std::atomic<bool> s_hfrGridValid{ false };
+        std::atomic<int64_t> s_hfrGridPeriodNs{ 0 }, s_hfrGridNs{ 0 };
+        // NFSMW_HFR_GRID_HZ=<hz>: a made-up grid at that rate (tests on any display).
+        const double s_hfrGridForcedHz = [] { const char* v = std::getenv("NFSMW_HFR_GRID_HZ"); return v ? std::atof(v) : 0.0; }();
 
         // macOS: a new frame may be shown a set time after the guest vblank
         // that released it (VK_GOOGLE_display_timing's desiredPresentTime,
@@ -353,7 +381,21 @@ namespace video
         };
         ScheduledPresent s_scheduled[64];
         uint32_t s_scheduledNext = 0;
+        // HFR (game/hfr.h): both pictures of a step later than the set time
+        // when the real ones aren't ready by it (video/hfr_schedule.h; under
+        // s_scheduleMutex). Active while in-between pictures are presented
+        // (until 1 s after the last one); the main thread's last asked-for time.
+        HfrShowAdapt s_hfrAdapt;
+        // NFSMW_HFR_SHOW_ADAPT=1 (DIAGNOSTIC): the adaptation on. Off: M2's
+        // run dm2 showed it backfires (later times keep more pictures queued
+        // than the swapchain has images: 80 pictures a second in a race that
+        // held 120 without it).
+        const bool s_hfrShowAdapt = [] { const char* v = std::getenv("NFSMW_HFR_SHOW_ADAPT"); return v && v[0] == '1'; }();
+        std::atomic<int64_t> s_hfrActiveUntil{ 0 };
+        int64_t s_hfrLastDesired = 0;
+        constexpr int64_t kHfrMinGapNs = 4'000'000;  // between two pictures asked for (order kept, never at once)
         float s_displayHz = 0.0f;  // the display mode's, for the log (main thread)
+        std::atomic<float> s_offeredHz{ 0.0f };  // the same, for HfrOffered (any thread)
 #endif
         // NFSMW_VBLANK_LOG's <file>.actual.csv: the driver's own on-screen
         // time per present (Metal's presentedTime, mach_absolute_time ns, 0:
@@ -410,6 +452,12 @@ namespace video
                         {
                             const bool shown = e.actualPresentTime != 0;
                             tripped |= s_schedule.Reported(shown, shown ? int64_t(e.actualPresentTime) + hostToSteady - p.desiredNs : 0);
+                            if (const int64_t now = NowNs(); s_hfrShowAdapt && shown && now < s_hfrActiveUntil.load(std::memory_order_relaxed))
+                                if (s_hfrAdapt.Report(int64_t(e.actualPresentTime) + hostToSteady - p.desiredNs, now))
+                                    fprintf(stderr, "[hfr] pictures shown %.2f ms after their vblank's time (+%.2f: %s; next earlier after %.0f s "
+                                                    "without a late one)\n", double(s_showAfterVblankNs + s_hfrAdapt.ExtraNs()) / 1e6,
+                                        double(s_hfrAdapt.ExtraNs()) / 1e6, "the real pictures weren't ready by their time" ,
+                                        double(s_hfrAdapt.HoldNs()) / 1e9);
                             p = {};
                             break;
                         }
@@ -470,6 +518,12 @@ namespace video
                 {
                     grid.Add(onScreen);
                     const bool fixed = grid.Estimate().valid;
+                    if (fixed)
+                    {
+                        s_hfrGridPeriodNs.store(int64_t(std::llround(grid.Estimate().periodNs)), std::memory_order_relaxed);
+                        s_hfrGridNs.store(grid.Estimate().gridNs, std::memory_order_relaxed);
+                    }
+                    s_hfrGridValid.store(fixed, std::memory_order_relaxed);
                     const int64_t since = s_gridFixedSince.load(std::memory_order_relaxed);
                     if (fixed != (since != 0))
                         s_gridFixedSince.store(fixed ? onScreen : 0, std::memory_order_relaxed);
@@ -477,13 +531,15 @@ namespace video
             }
             const RefreshEstimate& display = refresh.Estimate();
             if (s_timingLog)
-                fprintf(s_timingLog, "%llu,%lld,%lld,%lld,%d,%d,%.1f,%lld,%.0f,%lld,%d\n", (unsigned long long)t.id, (long long)t.vblank,
+                fprintf(s_timingLog, "%llu,%lld,%lld,%lld,%d,%d,%.1f,%lld,%.0f,%lld,%d,%.3f,%lld\n", (unsigned long long)t.id, (long long)t.vblank,
                     (long long)t.presented, (long long)onScreen, timed, display.valid, display.periodNs, (long long)display.gridNs,
-                    display.rmsNs, (long long)t.ready, display.multiple);
+                    display.rmsNs, (long long)t.ready, display.multiple, t.between, (long long)t.desired);
 #if defined(__APPLE__) && !TARGET_OS_IOS
             if (s_pastTiming)
                 ReadDriverReports(t);
 #endif
+            if (t.between != 0)
+                s_betweenShown++;
             if (!t.vblank)
                 return;
             s_shown++;
@@ -2100,6 +2156,158 @@ void main()
         }
 
         // After the frame's fence: RecordCompare's pictures saved and freed.
+        // NFSMW_LOG_COVERS=1 (gpu/covers.h): every presented picture, before
+        // the UI, scaled to 1/8 by a linear blit and read back a frame later
+        // (the slot's fence, waited for anyway), checked for a dark box with
+        // all four edges inside it, or a dark layer across it short of its
+        // top and bottom or its sides (FindInsetBox). Logged once per box (to 2%
+        // of the picture) and kind of picture (an in-between one or not), with
+        // the present's number and time; the lines are counted (PictureCoverHits).
+        struct CoverCheck
+        {
+            VkImage image = VK_NULL_HANDLE;
+            VkDeviceMemory imageMemory = VK_NULL_HANDLE;
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VkDeviceMemory bufferMemory = VK_NULL_HANDLE;
+            void* mapped = nullptr;
+            uint32_t w = 0, h = 0;  // the scaled picture
+            uint32_t srcW = 0, srcH = 0;
+            bool pending = false;
+            uint64_t present = 0;
+            float between = 0.0f;
+            double seconds = 0.0;
+        };
+        CoverCheck s_coverChecks[FRAMES_IN_FLIGHT];
+        std::atomic<uint64_t> s_pictureCoverHits{ 0 };
+        constexpr uint32_t kCoverCheckDiv = 8;
+
+        void CoverCheckRecord(VkCommandBuffer cmd, VkImage dst, uint32_t slotIndex, float between)
+        {
+            static uint64_t presents = 0;
+            static const auto launch = std::chrono::steady_clock::now();
+            presents++;
+            CoverCheck& c = s_coverChecks[slotIndex];
+            if (!s_swapReadable)
+                return;
+            const uint32_t w = s_swapExtent.width / kCoverCheckDiv, h = s_swapExtent.height / kCoverCheckDiv;
+            if (w < 16 || h < 16)
+                return;
+            if (c.w != w || c.h != h)
+            {
+                vkDeviceWaitIdle(s_device);
+                if (c.buffer)
+                {
+                    vkUnmapMemory(s_device, c.bufferMemory);
+                    vkDestroyBuffer(s_device, c.buffer, nullptr);
+                    vkFreeMemory(s_device, c.bufferMemory, nullptr);
+                    vkDestroyImage(s_device, c.image, nullptr);
+                    vkFreeMemory(s_device, c.imageMemory, nullptr);
+                }
+                c = CoverCheck{};
+                c.w = w;
+                c.h = h;
+                VkImageCreateInfo ici{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+                ici.imageType = VK_IMAGE_TYPE_2D;
+                ici.format = s_swapFormat;
+                ici.extent = { w, h, 1 };
+                ici.mipLevels = ici.arrayLayers = 1;
+                ici.samples = VK_SAMPLE_COUNT_1_BIT;
+                ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+                ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                vkCreateImage(s_device, &ici, nullptr, &c.image);
+                VkMemoryRequirements req;
+                vkGetImageMemoryRequirements(s_device, c.image, &req);
+                VkMemoryAllocateInfo ai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+                ai.allocationSize = req.size;
+                ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                vkAllocateMemory(s_device, &ai, nullptr, &c.imageMemory);
+                vkBindImageMemory(s_device, c.image, c.imageMemory, 0);
+                VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+                bci.size = VkDeviceSize(w) * h * 4;
+                bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                vkCreateBuffer(s_device, &bci, nullptr, &c.buffer);
+                vkGetBufferMemoryRequirements(s_device, c.buffer, &req);
+                ai.allocationSize = req.size;
+                ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                vkAllocateMemory(s_device, &ai, nullptr, &c.bufferMemory);
+                vkBindBufferMemory(s_device, c.buffer, c.bufferMemory, 0);
+                vkMapMemory(s_device, c.bufferMemory, 0, VK_WHOLE_SIZE, 0, &c.mapped);
+            }
+            Barrier(cmd, dst, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            Barrier(cmd, c.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            VkImageBlit blit{};
+            blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            blit.srcOffsets[1] = { int32_t(s_swapExtent.width), int32_t(s_swapExtent.height), 1 };
+            blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            blit.dstOffsets[1] = { int32_t(w), int32_t(h), 1 };
+            vkCmdBlitImage(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+            Barrier(cmd, c.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            VkBufferImageCopy region{};
+            region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            region.imageExtent = { w, h, 1 };
+            vkCmdCopyImageToBuffer(cmd, c.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c.buffer, 1, &region);
+            VkBufferMemoryBarrier hostRead{ VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+            hostRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            hostRead.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            hostRead.srcQueueFamilyIndex = hostRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            hostRead.buffer = c.buffer;
+            hostRead.size = VK_WHOLE_SIZE;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &hostRead, 0, nullptr);
+            // Back to the pass's layout: the UI is drawn after it.
+            Barrier(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            c.pending = true;
+            c.srcW = s_swapExtent.width;
+            c.srcH = s_swapExtent.height;
+            c.present = presents;
+            c.between = between;
+            c.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - launch).count();
+        }
+
+        // After the slot's fence.
+        void CoverCheckHarvest(uint32_t slotIndex)
+        {
+            CoverCheck& c = s_coverChecks[slotIndex];
+            if (!c.pending)
+                return;
+            c.pending = false;
+            const bool bgr = s_swapFormat == VK_FORMAT_B8G8R8A8_UNORM || s_swapFormat == VK_FORMAT_B8G8R8A8_SRGB;
+            static std::vector<uint8_t> luma;
+            luma.resize(size_t(c.w) * c.h);
+            const uint8_t* px = static_cast<const uint8_t*>(c.mapped);
+            for (size_t i = 0; i < luma.size(); i++)
+            {
+                const uint32_t r = px[i * 4 + (bgr ? 2 : 0)], g = px[i * 4 + 1], b = px[i * 4 + (bgr ? 0 : 2)];
+                luma[i] = uint8_t((2 * r + 5 * g + b) / 8);
+            }
+            const gpu::covers::Luma l{ luma.data(), int32_t(c.w), int32_t(c.h), int32_t(c.w) };
+            const gpu::covers::Box box = gpu::covers::FindInsetBox(l);
+            if (!box.found)
+                return;
+            // Once per box (2% of the picture) and kind of picture.
+            const auto q = [](int32_t v, uint32_t size) { return uint64_t(std::lround(double(v) / double(size) * 50.0)); };
+            const uint64_t key = (q(box.box.x0, c.w) << 24) | (q(box.box.y0, c.h) << 16) | (q(box.box.x1, c.w) << 8) | q(box.box.y1, c.h) |
+                (uint64_t(c.between != 0.0f) << 32) | (uint64_t(c.srcW) << 33) | (uint64_t(c.srcH) << 48) | (uint64_t(box.kind) << 62);
+            static std::unordered_set<uint64_t> logged;
+            if (logged.size() >= 256 || !logged.insert(key).second)
+                return;
+            s_pictureCoverHits.fetch_add(1, std::memory_order_relaxed);
+            const uint32_t d = kCoverCheckDiv;
+            auto ring = [](float r) { return r < 0.0f ? std::string("its edge") : std::format("{:.0f}%", r * 100.0f); };
+            fprintf(stderr,
+                "[covers] picture: %s at present %llu (%.2f s%s): [%d,%d)x[%d,%d) of %ux%u px (%.0f%% of it; short by left %d top %d "
+                "right %d bottom %d px), lit just outside it: left %s top %s right %s bottom %s\n",
+                gpu::covers::BoxKindName(box.kind), (unsigned long long)c.present, c.seconds,
+                c.between != 0.0f ? std::format(", an in-between picture at {:.3f}", c.between).c_str() : "", box.box.x0 * d, box.box.x1 * d,
+                box.box.y0 * d, box.box.y1 * d, c.srcW, c.srcH, box.share * 100.0f, box.box.x0 * d, box.box.y0 * d,
+                int32_t(c.srcW) - box.box.x1 * int32_t(d), int32_t(c.srcH) - box.box.y1 * int32_t(d), ring(box.ringLit[0]).c_str(),
+                ring(box.ringLit[1]).c_str(), ring(box.ringLit[2]).c_str(), ring(box.ringLit[3]).c_str());
+        }
+
         void SaveCompare(std::vector<CompareShot>& shots, int captureIndex)
         {
             const bool bgr = s_swapFormat == VK_FORMAT_B8G8R8A8_UNORM || s_swapFormat == VK_FORMAT_B8G8R8A8_SRGB;
@@ -2589,7 +2797,7 @@ void main()
             if (const char* path = std::getenv("NFSMW_VBLANK_LOG"))
                 if ((s_timingLog = fopen(path, "w")))
                 {
-                    fprintf(s_timingLog, "id,vblank,presented,on_screen,timed,fit_valid,period_ns,grid_ns,rms_ns,ready,multiple\n");
+                    fprintf(s_timingLog, "id,vblank,presented,on_screen,timed,fit_valid,period_ns,grid_ns,rms_ns,ready,multiple,between,desired\n");
 #if defined(__APPLE__) && !TARGET_OS_IOS
                     if (s_pastTiming && (s_actualLog = fopen((std::string(path) + ".actual.csv").c_str(), "w")))
                         fprintf(s_actualLog, "# steady_ns %lld uptime_raw_ns %llu\nid,actual_ns\n", (long long)NowNs(),
@@ -2712,6 +2920,7 @@ void main()
             const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(s_window));
 #if defined(__APPLE__) && !TARGET_OS_IOS
             s_displayHz = mode ? mode->refresh_rate : 0.0f;
+            s_offeredHz.store(s_displayHz, std::memory_order_relaxed);
             {
                 std::lock_guard lock(s_scheduleMutex);
                 s_schedule.SetDisplayHz(s_displayHz);
@@ -2740,6 +2949,11 @@ void main()
         {
             s_pendingImage = VK_NULL_HANDLE;
             s_pendingNew = !s_pending.empty();
+        }
+        if (s_betweenImage == image)
+        {
+            s_betweenImage = VK_NULL_HANDLE;
+            s_betweenNew = false;
         }
         if (s_lastImage == image)
         {
@@ -3250,6 +3464,11 @@ void main()
             in.gridFixed = gridSince != 0;
             in.gridStableSec = gridSince ? double(NowNs() - gridSince) / 1e9 : 0.0;
             in.shownBefore = settings::RefreshNoticeShown(key);
+            {
+                double period = 0;
+                int64_t grid = 0;
+                in.hfrHandles = hfr::Enabled() && HfrGrid(period, grid);
+            }
             in.forced = forced;
             const bool frames = s_firstGameFrame != std::chrono::steady_clock::time_point{};
             in.sessionSec = frames ? std::chrono::duration<double>(now - s_firstGameFrame).count() : 0.0;
@@ -3408,9 +3627,26 @@ void main()
         uint32_t w = 0, h = 0, aspectW = 0, aspectH = 0;
         VkImage gpuImage = VK_NULL_HANDLE;
         int64_t frameVblank = 0;
+        float frameBetween = 0.0f;  // an in-between picture: its fraction of the step
+        float frameShift = 0.0f;    // a real picture shown that much of a vblank early (a step's own picture drawn between)
+        int64_t frameTarget = 0;    // when to show it (HFR on a grid that isn't a multiple of 60 Hz; 0: the usual way)
+        int64_t frameDesired = 0;   // macOS: when it is to be shown (0: when ready)
         {
             std::lock_guard lock(s_pendingMutex);
-            if (s_pendingNew)
+            if (s_betweenNew)
+            {
+                gpuImage = s_betweenImage;
+                s_betweenImage = VK_NULL_HANDLE;
+                w = s_betweenWidth;
+                h = s_betweenHeight;
+                aspectW = s_betweenAspectW;
+                aspectH = s_betweenAspectH;
+                s_betweenNew = false;
+                frameVblank = s_betweenVblank;
+                frameBetween = s_betweenT;
+                frameTarget = s_betweenTarget;
+            }
+            else if (s_pendingNew)
             {
                 pixels.swap(s_pending);
                 gpuImage = s_pendingImage;
@@ -3421,6 +3657,8 @@ void main()
                 aspectH = s_pendingAspectH;
                 s_pendingNew = false;
                 frameVblank = s_pendingVblank;
+                frameShift = s_pendingShift;
+                frameTarget = s_pendingTarget;
             }
         }
         const bool upload = !pixels.empty();
@@ -3490,6 +3728,8 @@ void main()
 
         Frame& f = s_frames[s_frameIndex];
         vkWaitForFences(s_device, 1, &f.inFlight, VK_TRUE, UINT64_MAX);
+        if (game::covers::Enabled())
+            CoverCheckHarvest(s_frameIndex);
         if (f.timed)
         {
             uint64_t ts[3];
@@ -3764,6 +4004,19 @@ void main()
                     s_context.cmdBeginRendering(cmd, &again);
                 }
             }
+            // NFSMW_LOG_COVERS=1: the picture as drawn, before the UI (the
+            // settings menu is a dark box of its own), checked for a dark box
+            // inside it (CoverCheckRecord, read back a frame later).
+            if (game::covers::Enabled() && haveSource)
+            {
+                s_context.cmdEndRendering(cmd);
+                CoverCheckRecord(cmd, dst, s_frameIndex, 0.0f);
+                VkRenderingAttachmentInfoKHR resume = color;
+                resume.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+                VkRenderingInfoKHR again = ri;
+                again.pColorAttachments = &resume;
+                s_context.cmdBeginRendering(cmd, &again);
+            }
             if (uiFrame)
                 ui::Draw(cmd);
             s_context.cmdEndRendering(cmd);
@@ -3936,9 +4189,29 @@ void main()
                     std::lock_guard lock(s_scheduleMutex);
                     wanted = s_schedule.Wanted(locked);
                     tripped = s_schedule.Tripped();
-                    if (wanted)
+                    if (frameTarget)
                     {
-                        const int64_t desired = frameVblank + s_showAfterVblankNs;
+                        // HFR on a grid (HfrGrid; on a Mac only made up, NFSMW_HFR_GRID_HZ): its refresh.
+                        frameDesired = frameTarget;
+                        s_scheduled[s_scheduledNext++ % std::size(s_scheduled)] = { presentTime.presentID, frameTarget, false };
+                        presentTime.desiredPresentTime = uint64_t(std::max<int64_t>(frameTarget - HostToSteadyNs(), 0));
+                    }
+                    else if (wanted)
+                    {
+                        // An in-between picture: its fraction of the vblank after its own.
+                        int64_t desired = frameVblank + s_showAfterVblankNs +
+                            int64_t(std::llround(double(frameBetween != 0.0f ? frameBetween : frameShift) * GuestVblank().PeriodNs()));
+                        // HFR: later while real pictures miss their time, and
+                        // never before (or with) the picture asked for last.
+                        const int64_t nowNs = NowNs();
+                        if (frameBetween != 0.0f)
+                            s_hfrActiveUntil.store(nowNs + 1'000'000'000, std::memory_order_relaxed);
+                        if (nowNs < s_hfrActiveUntil.load(std::memory_order_relaxed))
+                        {
+                            desired = std::max(desired + s_hfrAdapt.ExtraNs(), s_hfrLastDesired + kHfrMinGapNs);
+                            s_hfrLastDesired = desired;
+                        }
+                        frameDesired = desired;
                         s_scheduled[s_scheduledNext++ % std::size(s_scheduled)] = { presentTime.presentID, desired, false };
                         presentTime.desiredPresentTime = uint64_t(std::max<int64_t>(desired - HostToSteadyNs(), 0));
                     }
@@ -3974,7 +4247,18 @@ void main()
         // PresentAt; 0 everywhere else). Its GPU work is submitted; the queue
         // is free meanwhile.
         // (No hold of more than 100 ms: three vblanks are the most it gives.)
-        if (const int64_t at = frameVblank ? GuestVblank().PresentAt(frameVblank) : 0; at > ready && at - ready < 100'000'000)
+        int64_t at = frameVblank ? GuestVblank().PresentAt(frameVblank, frameBetween != 0.0f ? frameBetween : frameShift) : 0;
+        // HFR on a grid that isn't a multiple of 60 Hz: just after the refresh
+        // before the picture's own, so FIFO shows it on that one (a Mac shows
+        // it at its time instead: desiredPresentTime above).
+        if (frameTarget && !frameDesired)
+        {
+            double period = 0;
+            int64_t grid = 0;
+            if (HfrGrid(period, grid))
+                at = frameTarget - int64_t(std::llround(period)) + VblankLock::kHoldAfterRefreshNs;
+        }
+        if (at > ready && at - ready < 100'000'000)
         {
             queueLock.unlock();
             std::this_thread::sleep_until(std::chrono::steady_clock::time_point(std::chrono::nanoseconds(at)));
@@ -3986,10 +4270,18 @@ void main()
         if (s_presentTiming && (present == VK_SUCCESS || present == VK_SUBOPTIMAL_KHR))
         {
             std::lock_guard lock(s_timingMutex);
-            s_timings.push_back({ id, s_swapchainGeneration, presented, frameVblank, ready });
+            s_timings.push_back({ id, s_swapchainGeneration, presented, frameBetween != 0.0f ? 0 : frameVblank, ready, frameBetween, frameDesired });
             s_timingCv.notify_one();
         }
         s_lastPresent = std::chrono::steady_clock::now();
+        if (frameBetween != 0.0f)
+        {
+            // A line every 20 s of in-between pictures at 60 a second.
+            if (++s_betweenPresented % 1200 == 0)
+                fprintf(stderr, "[hfr] presenter: %llu in-between pictures presented, %llu seen on screen, %llu replaced before they were "
+                                "shown\n", (unsigned long long)s_betweenPresented.load(), (unsigned long long)s_betweenShown.load(),
+                    (unsigned long long)s_betweenDropped.load());
+        }
         if (!captures.empty())
         {
             CapturedFrame frame;
@@ -4040,8 +4332,25 @@ void main()
         return true;
     }
 
-    void SubmitFrontImage(VkImage image, uint32_t width, uint32_t height, uint32_t aspectWidth, uint32_t aspectHeight)
+    void SubmitFrontImage(VkImage image, uint32_t width, uint32_t height, uint32_t aspectWidth, uint32_t aspectHeight, float between,
+        float shift, int64_t target)
     {
+        if (between != 0.0f)
+        {
+            std::lock_guard lock(s_pendingMutex);
+            if (s_betweenNew)
+                s_betweenDropped++;
+            s_betweenImage = image;
+            s_betweenWidth = width;
+            s_betweenHeight = height;
+            s_betweenAspectW = aspectWidth;
+            s_betweenAspectH = aspectHeight;
+            s_betweenVblank = s_guestVblank.load(std::memory_order_relaxed);
+            s_betweenT = between;
+            s_betweenTarget = target;
+            s_betweenNew = true;
+            return;
+        }
         if (!s_window)
             return;
         std::lock_guard lock(s_pendingMutex);
@@ -4055,6 +4364,8 @@ void main()
         s_pendingAspectH = aspectHeight;
         s_pendingNew = true;
         s_pendingVblank = s_guestVblank.load(std::memory_order_relaxed);
+        s_pendingShift = shift;
+        s_pendingTarget = target;
     }
 
     void WaitGpuIdle()
@@ -4102,6 +4413,55 @@ void main()
     {
         s_guestVblank.store(t, std::memory_order_relaxed);
         s_guestVblanks.fetch_add(1, std::memory_order_release);
+    }
+
+    bool HfrGrid(double& periodNs, int64_t& gridNs)
+    {
+        if (GuestVblankDivider() != 1)
+            return false;
+        if (s_hfrGridForcedHz > 0)
+        {
+            periodNs = 1e9 / s_hfrGridForcedHz;
+            gridNs = 0;
+            return true;
+        }
+        if (!s_hfrGridValid.load(std::memory_order_relaxed) || s_gridHz.load(std::memory_order_relaxed) <= 0)
+            return false;
+        periodNs = double(s_hfrGridPeriodNs.load(std::memory_order_relaxed));
+        gridNs = s_hfrGridNs.load(std::memory_order_relaxed);
+        return periodNs > 0;
+    }
+
+    bool HfrOffered()
+    {
+#if defined(__APPLE__) && !TARGET_OS_IOS
+        // A 120 Hz screen (present_schedule.h's FastDisplay: ProMotion, or a
+        // 120 Hz monitor): a Mac draws in-between pictures nowhere else yet
+        // (HfrPicturesPerStep; no refresh grid on a Mac: a 144 Hz monitor
+        // shows the game at 60).
+        const float hz = s_offeredHz.load(std::memory_order_relaxed);
+        return s_displayTiming && hz >= PresentSchedule::kMinFastHz && hz <= PresentSchedule::kMaxFastHz;
+#else
+        return false;
+#endif
+    }
+
+    int HfrPicturesPerStep()
+    {
+        if (GuestVblankDivider() != 1 || s_hfrGridForcedHz > 0)
+            return 1;  // Frame Rate 30; a made-up grid (HfrGrid)
+        if (const int multiple = GuestVblank().HoldMultiple(); multiple >= 2)
+            return std::min(multiple, 4);
+#if defined(__APPLE__) && !TARGET_OS_IOS
+        if (s_displayTiming && s_showAfterVblankNs > 0)
+        {
+            const bool locked = GuestVblank().Locked();
+            std::lock_guard lock(s_scheduleMutex);
+            if (s_schedule.FastDisplay() && s_schedule.Wanted(locked))
+                return 2;
+        }
+#endif
+        return 1;
     }
 
     uint64_t GuestVblanks()
@@ -4223,5 +4583,13 @@ void main()
             SDL_DestroyWindow(s_window);
         // No SDL_Quit: the process exits next, and the game's audio thread
         // may still be feeding its stream (SDL_Quit freed it under it).
+    }
+}
+
+namespace video
+{
+    uint64_t PictureCoverHits()
+    {
+        return s_pictureCoverHits.load(std::memory_order_relaxed);
     }
 }

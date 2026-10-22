@@ -9,6 +9,7 @@
 #include <debug/timeline.h>
 #include <unordered_set>
 #include "block_ranges.h"
+#include "covers.h"
 #include "edge_bars.h"
 #include "memory_plan.h"
 #include "pipeline_cache_header.h"
@@ -18,6 +19,7 @@
 #include "depth_only.h"
 #include "render_scale.h"
 #include "shared_memory_glsl.h"
+#include "split_views.h"
 #include "xenos/registers.h"
 
 #include <kernel/vmem.h>
@@ -25,8 +27,11 @@
 #include <video/presenter.h>
 #include <video/picture_fit.h>
 #include <video/scale_budget.h>
+#include <game/hfr.h>
 #include <user/paths.h>
 #include <user/settings.h>
+#include <game/cover_callers.h>
+#include <game/split_screen.h>
 #include <game/ultrawide.h>
 
 #include <glslang/Include/glslang_c_interface.h>
@@ -1425,6 +1430,44 @@ namespace gpu::renderer
             const std::string& preamble);
         std::atomic<uint64_t> s_shaderCacheHits{ 0 };
 
+        // HFR M3: large vertex ranges narrowed to a draw's vertices (see the
+        // draw's guard loop). NFSMW_NARROW_VERTICES=1/0; on by default with
+        // Smooth Motion (game/hfr.h), where the guard stalled on them.
+        bool NarrowVerticesOn()
+        {
+            static const bool on = [] {
+                const char* v = std::getenv("NFSMW_NARROW_VERTICES");
+                const bool r = v ? v[0] == '1' : hfr::Enabled();
+                if (r)
+                    fprintf(stderr, "[renderer] large dynamic vertex buffers copied or guarded as each draw's vertices only\n");
+                return r;
+            }();
+            return on;
+        }
+        // A large vertex range the CPU has written since a draw last read it
+        // (a dynamic buffer; once seen, kept): a small cache by base address.
+        bool DynamicVertexRange(uint32_t base, uint32_t size)
+        {
+            struct Entry
+            {
+                uint32_t base = 0, size = 0;
+                uint64_t seen = 0;
+                bool dynamic = false;
+            };
+            static Entry cache[256];
+            Entry& e = cache[(base >> 12) & 255];
+            const uint64_t now = writewatch::Current();
+            if (e.base != base || e.size != size)
+            {
+                e = { base, size, now, false };
+                return false;
+            }
+            if (!e.dynamic && writewatch::WrittenSince(base, size, e.seen))
+                e.dynamic = true;
+            e.seen = now;
+            return e.dynamic;
+        }
+
         std::vector<uint32_t> CompileGlsl(const std::string& source, glslang_stage_t stage, std::string& log,
             const std::string& shaderPreamble = {})
         {
@@ -1891,6 +1934,18 @@ namespace gpu::renderer
             // at 2x2), 9 on a Mac with an M3 or later Max or Ultra, and on an
             // iPhone or iPad the chip's (video/scale_budget: 1 on every chip
             // measured so far).
+            // HFR (game/hfr.h, NFSMW_HFR=1): two pictures a step, so half
+            // the budget, and the same scale both ways (a 1x2 picture is
+            // half as sharp across: M1 Pro at 2x2 under HFR drew 64-102 fps,
+            // and 5.3-8.2 ms of GPU a picture at 1x, near its 8.3 ms).
+            // Only where the screen can show them (video::HfrOffered: Smooth
+            // Motion on, a 60 Hz screen draws none).
+            if (hfr::Enabled() && video::HfrOffered())
+            {
+                video::AutoRenderScale(regionW, regionH, std::max(1u, s_scaleBudget / 2), sx, sy);
+                sx = sy = std::min(sx, sy);
+                return gpu::RenderScale::Whole(sx, sy);
+            }
             video::AutoRenderScale(regionW, regionH, s_scaleBudget, sx, sy);
             return gpu::RenderScale::Whole(sx, sy);
         }
@@ -1901,7 +1956,7 @@ namespace gpu::renderer
                 return "NFSMW_RENDER_SCALE";
             if (setting > 0)
                 return "setting";
-            return std::format("auto for a {}x{} picture", regionW, regionH);
+            return std::format("auto for a {}x{} picture{}", regionW, regionH, hfr::Enabled() && video::HfrOffered() ? ", half the budget for Smooth Motion's two pictures a step" : "");
         }
 
         void ReadRenderScale(const VkPhysicalDeviceProperties& props)
@@ -2843,6 +2898,24 @@ namespace gpu::renderer
             return s_untiledArea == 1 || (s_untiledArea == 2 && s_frame / 120 % 2 == 1);
         }
 
+        // Whether the game is in split screen (game/split_screen.h), read
+        // once a frame; its split-screen rules: gpu/split_views.h. CP thread.
+        bool SplitFrame()
+        {
+            static uint64_t frame = ~0ull;
+            static bool split = false;
+            if (frame != s_frame)
+            {
+                frame = s_frame;
+                const bool now = game::split_screen::GameSaysSplit();
+                if (now != split)
+                    fprintf(stderr, "[renderer] split screen %s at frame %llu%s\n", now ? "on" : "off", (unsigned long long)s_frame,
+                        now ? ": untiled draws are cut to their own view, a second view restarts its pass" : "");
+                split = now;
+            }
+            return split;
+        }
+
         // Where an untiled draw into `targets` (4 colour, then depth; any
         // null) may draw, in guest pixels of their common w x h (the caller
         // clamps to it): tile 0 draws the whole frame, so the whole target.
@@ -2856,11 +2929,14 @@ namespace gpu::renderer
         // 8192x8192). `why`: 0 cut to the viewport, 1 clipping off, 2 no
         // viewport transform (or garbage in it), 3 a target that fell back
         // to the whole target (wholeArea), 4 off.
+        // In split screen (gpu/split_views.h) every untiled draw is cut, and
+        // a fallback to the whole target doesn't hold.
         Rect UntiledScissor(RenderTarget* const targets[5], int32_t w, int32_t h, int* why = nullptr)
         {
             Rect r{ 0, 0, w, h };
             int reason = 4;
-            if (UntiledAreaOn())
+            const bool split = SplitFrame();
+            if (gpu::split_views::CutOn(UntiledAreaOn(), split))
             {
                 float ax = std::fabs(RegF(XE_GPU_REG_PA_CL_VPORT_XSCALE)), ox = RegF(XE_GPU_REG_PA_CL_VPORT_XOFFSET);
                 float ay = std::fabs(RegF(XE_GPU_REG_PA_CL_VPORT_YSCALE)), oy = RegF(XE_GPU_REG_PA_CL_VPORT_YOFFSET);
@@ -2868,7 +2944,7 @@ namespace gpu::renderer
                     reason = 1;
                 else if ((Reg<reg::PA_CL_VTE_CNTL>().value & 0xF) != 0xF || !std::isfinite(ax + ox + ay + oy))
                     reason = 2;
-                else if (std::any_of(targets, targets + 5, [](RenderTarget* rt) { return rt && rt->wholeArea; }))
+                else if (std::any_of(targets, targets + 5, [&](RenderTarget* rt) { return rt && gpu::split_views::KeepsWholeArea(rt->wholeArea, split); }))
                     reason = 3;
                 else
                     reason = 0;
@@ -2876,19 +2952,16 @@ namespace gpu::renderer
                 {
                     // As the host viewport: the window offset (0 for tile 0)
                     // and D3D's integer pixel centres. |scale|: y is flipped.
+                    float wx = 0.0f, wy = 0.0f;
                     if (Reg<reg::PA_SU_SC_MODE_CNTL>().vtx_window_offset_enable)
                     {
                         auto wo = Reg<reg::PA_SC_WINDOW_OFFSET>();
-                        ox += float(wo.window_x_offset);
-                        oy += float(wo.window_y_offset);
+                        wx = float(wo.window_x_offset);
+                        wy = float(wo.window_y_offset);
                     }
-                    if (Reg<reg::PA_SU_VTX_CNTL>().pix_center == xenos::PixelCenter::kD3DZero)
-                    {
-                        ox += 0.5f;
-                        oy += 0.5f;
-                    }
-                    auto edge = [](float v, int32_t hi) { return int32_t(std::fmax(0.0f, std::fmin(std::ceil(v - 0.5f), float(hi)))); };
-                    r = { edge(ox - ax, w), edge(oy - ay, h), edge(ox + ax, w), edge(oy + ay, h) };
+                    const bool d3dCenter = Reg<reg::PA_SU_VTX_CNTL>().pix_center == xenos::PixelCenter::kD3DZero;
+                    const gpu::split_views::GuestRect v = gpu::split_views::ViewportPixels(ax, ox, ay, oy, wx, wy, d3dCenter, w, h);
+                    r = { v.x0, v.y0, v.x1, v.y1 };
                 }
             }
             if (why)
@@ -2920,6 +2993,162 @@ namespace gpu::renderer
                 return high ? (w >> 16) : (w & 0xFFFF);
             }
         };
+
+        // NFSMW_LOG_COVERS=1 (gpu/covers.h, game/cover_callers.h): the
+        // current draw's quads, if it is a front-end draw (the front-end
+        // matrix in c0..c3 as the hook left it, ePolys at fetch 95 read by
+        // its vertex shader), as host pixels of its target after every rule
+        // (`posScale`, `scissor`), against its guest viewport in host pixels:
+        // ClassifyQuad's kinds, logged once per site.
+        std::atomic<uint64_t> s_coverHits{ 0 };
+        void LogCovers(uint32_t count, uint32_t prim, const IndexSource& src, const float posScale[4], const VkRect2D& scissor,
+            float hostW, float hostH, float fx, float fy, const gpu::bars::Plan& plan)
+        {
+            const float feX = game::FrontEndScaleX();
+            if (feX <= 0.0f || prim != 13 || count == 0 || count > 256 || count % 4)
+                return;
+            float c[8];
+            memcpy(c, &s_regs[XE_GPU_REG_SHADER_CONSTANT_000_X], sizeof(c));
+            const uint32_t* vf = &s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 95 * 2];
+            if (!(std::fabs(c[0] - feX) <= feX * 1e-5f && c[1] == 0.0f && c[2] == 0.0f && (vf[0] & 3) == 3))
+                return;
+            const auto& vi = s_vs->info;
+            if (!(((vi.vertexFetchConstants[95 / 32] >> (95 % 32)) & 1) && (vi.constRelative || (vi.constUsed[0] & 0xFull) == 0xFull)))
+                return;
+            const float s = game::AspectScaleX(), sv = game::AspectScaleY();
+            const float bandMidX = c[3] * (1.0f - s), bandMidY = c[7] * (1.0f - sv);
+            // The guest viewport (what the presenter shows of this target), in
+            // host pixels, from the raw registers.
+            const float vsx = std::fabs(RegF(XE_GPU_REG_PA_CL_VPORT_XSCALE)), vox = RegF(XE_GPU_REG_PA_CL_VPORT_XOFFSET);
+            const float vsy = std::fabs(RegF(XE_GPU_REG_PA_CL_VPORT_YSCALE)), voy = RegF(XE_GPU_REG_PA_CL_VPORT_YOFFSET);
+            gpu::covers::Rect picture{ int32_t(std::lround((vox - vsx) * fx)), int32_t(std::lround((voy - vsy) * fy)),
+                int32_t(std::lround((vox + vsx) * fx)), int32_t(std::lround((voy + vsy) * fy)) };
+            picture = gpu::covers::Intersect(picture, { 0, 0, int32_t(hostW), int32_t(hostH) });
+            const gpu::covers::Rect sc{ scissor.offset.x, scissor.offset.y, scissor.offset.x + int32_t(scissor.extent.width),
+                scissor.offset.y + int32_t(scissor.extent.height) };
+            const uint32_t base = vf[0] & 0x1FFFFFFC, endian = vf[1] & 3;
+            const uint32_t words = (vf[1] >> 2) & 0xFFFFFF, first = s_regs[XE_GPU_REG_VGT_INDX_OFFSET];
+            const uint32_t blend0 = s_regs[XE_GPU_REG_RB_BLENDCONTROL0] & 0x1FFF1FFF;
+            // Blending on unless the colour's factors are one and zero
+            // (RB_BLENDCONTROL bits 0-4 and 8-12; 07060706: source alpha and
+            // one minus it, the front end's usual).
+            const bool blended = !((blend0 & 0x1F) == 1 && ((blend0 >> 8) & 0x1F) == 0);
+            xenos::xe_gpu_texture_fetch_t t0;
+            memcpy(&t0, &s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0], sizeof(t0));
+            const bool t0Sampled = (s_ps->info.texture2DMask & 1) != 0;
+            const uint32_t t0W = uint32_t(t0.size_2d.width) + 1, t0H = uint32_t(t0.size_2d.height) + 1;
+            // Its darkest texel of five (the centre and halfway to each corner),
+            // for a 32-bit t0 (format 6); white for the game's 32x32 white
+            // texture's size and anything unread.
+            uint32_t texel = 0xFFFFFFFFu;
+            const bool texelKnown = !t0Sampled || (t0W <= 32 && t0H <= 32) || uint32_t(t0.format) == 6;
+            if (t0Sampled && uint32_t(t0.format) == 6 && (t0W > 32 || t0H > 32))
+            {
+                const uint32_t t0Base = (uint32_t(t0.base_address) << 12) & 0x1FFFFFFFu, t0Pitch = uint32_t(t0.pitch) << 5;
+                uint32_t darkest = 0xFFFFFFFFu, darkestSum = 3 * 255 + 1;
+                const uint32_t at[5][2] = { { t0W / 2, t0H / 2 }, { t0W / 4, t0H / 4 }, { 3 * t0W / 4, t0H / 4 }, { t0W / 4, 3 * t0H / 4 },
+                    { 3 * t0W / 4, 3 * t0H / 4 } };
+                for (const auto& p : at)
+                    if (t0Pitch && p[0] < t0Pitch)
+                    {
+                        // k_8_8_8_8 as the front end's textures are stored: A in the top byte after the swap.
+                        const bool tiled = t0.tiled;
+                        const uint32_t texEndian = static_cast<uint32_t>(t0.endianness);
+                        const uint32_t w32 = GpuSwap(LoadPhysical(t0Base + gpu::bars::TexelOffset32(p[0], p[1], t0Pitch, tiled)), texEndian);
+                        const uint32_t sum = ((w32 >> 16) & 0xFF) + ((w32 >> 8) & 0xFF) + (w32 & 0xFF);
+                        if (sum < darkestSum)
+                        {
+                            darkestSum = sum;
+                            darkest = w32;
+                        }
+                    }
+                texel = darkest;
+            }
+            const bool filledOutside = plan.rectCount > 0 && (plan.fill == gpu::bars::Fill::Blackout || plan.fill == gpu::bars::Fill::Backdrop);
+            for (uint32_t v0 = 0; v0 < count; v0 += 4)
+            {
+                gpu::covers::Quad q;
+                float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f;
+                bool valid = true;
+                for (uint32_t k = 0; k < 4 && valid; k++)
+                {
+                    const uint32_t v = src.Get(v0 + k) + first;
+                    if ((v + 1) * 8 > words)
+                    {
+                        valid = false;
+                        break;
+                    }
+                    float p[3];
+                    for (uint32_t j = 0; j < 3; j++)
+                    {
+                        const uint32_t b = GpuSwap(LoadPhysical(base + (v * 8 + j) * 4), endian);
+                        memcpy(&p[j], &b, 4);
+                    }
+                    const float x = p[0] * c[0] + p[1] * c[1] + p[2] * c[2] + c[3];
+                    const float y = p[0] * c[4] + p[1] * c[5] + p[2] * c[6] + c[7];
+                    x0 = std::min(x0, x);
+                    x1 = std::max(x1, x);
+                    y0 = std::min(y0, y);
+                    y1 = std::max(y1, y);
+                    q.argb[k] = GpuSwap(LoadPhysical(base + (v * 8 + 3) * 4), endian);
+                }
+                if (!valid)
+                    break;
+                const gpu::bars::Rect host = gpu::bars::ClipToHost(x0, x1, y0, y1, posScale, hostW, hostH);
+                q.host = gpu::covers::Intersect({ host.x0, host.y0, host.x1, host.y1 }, sc);
+                q.picture = picture;
+                q.band[0] = (x0 - bandMidX) / s;
+                q.band[1] = (x1 - bandMidX) / s;
+                q.band[2] = (y0 - bandMidY) / sv;
+                q.band[3] = (y1 - bandMidY) / sv;
+                q.texel = t0Sampled ? texel : 0xFFFFFFFFu;
+                q.texelKnown = texelKnown;
+                q.blended = blended;
+                q.filledOutside = filledOutside;
+                const gpu::covers::Verdict verdict = gpu::covers::ClassifyQuad(q);
+                if (verdict.kind == gpu::covers::Kind::None)
+                    continue;
+                game::covers::Chain chain;
+                uint32_t quadWords[16];
+                bool readable = true;
+                for (uint32_t k = 0; k < 4 && readable; k++)
+                {
+                    const uint32_t v = src.Get(v0 + k) + first;
+                    readable = (v + 1) * 8 <= words;
+                    for (uint32_t j = 0; j < 4 && readable; j++)
+                        quadWords[k * 4 + j] = GpuSwap(LoadPhysical(base + (v * 8 + j) * 4), endian);
+                }
+                const bool known = readable && game::covers::CallerOf(game::covers::QuadKey(quadWords), chain);
+                // Once per site, kind, extent (to 1% of the picture), opacity.
+                const float pw = float(std::max(picture.x1 - picture.x0, 1)), ph = float(std::max(picture.y1 - picture.y0, 1));
+                uint64_t key = uint64_t(verdict.kind) | (uint64_t(verdict.minAlpha >= 0xF0) << 3);
+                for (uint32_t i = 0; i < chain.n; i++)
+                    key = key * 1000003ull ^ chain.lr[i];
+                for (const int32_t e : verdict.shortBy)
+                    key = key * 131ull + uint64_t(std::lround(float(e) / std::min(pw, ph) * 100.0f));
+                key = key * 131ull + uint64_t(std::lround(s * 1000.0f)) * 7 + uint64_t(std::lround(sv * 1000.0f));
+                static std::unordered_set<uint64_t> logged;
+                if (logged.size() >= 512 || !logged.insert(key).second)
+                    continue;
+                s_coverHits.fetch_add(1, std::memory_order_relaxed);
+                fprintf(stderr,
+                    "[covers] %s: frame %llu caller %s; host [%d,%d)x[%d,%d) of the picture [%d,%d)x[%d,%d) (%.0f%% of it; short by "
+                    "left %d top %d right %d bottom %d px), band x %.3f..%.3f y %.3f..%.3f, view scale x %.4f y %.4f; colour %08X %08X %08X "
+                    "%08X (max RGB %02X, alpha %02X) blend %08X t0 %s; edge-bar rules: %s; vs_%016llx ps_%016llx n%u quad %u\n",
+                    gpu::covers::KindName(verdict.kind), (unsigned long long)s_frame, known ? game::covers::Describe(chain).c_str()
+                          : std::format("unknown (key {:016X}, {} quads noted)", readable ? game::covers::QuadKey(quadWords) : 0ull,
+                                game::covers::Noted()).c_str(),
+                    q.host.x0, q.host.x1, q.host.y0, q.host.y1, picture.x0, picture.x1, picture.y0, picture.y1, verdict.share * 100.0f,
+                    verdict.shortBy[0], verdict.shortBy[1], verdict.shortBy[2], verdict.shortBy[3], q.band[0], q.band[1], q.band[2], q.band[3], s,
+                    sv, q.argb[0], q.argb[1], q.argb[2], q.argb[3], verdict.maxRgb, verdict.minAlpha, blend0,
+                    t0Sampled ? std::format("{:08X} {}x{} f{} darkest {:08X}", (uint32_t(t0.base_address) << 12) & 0x1FFFFFFFu, t0W, t0H,
+                                    uint32_t(t0.format), texel).c_str()
+                              : "-",
+                    plan.fill == gpu::bars::Fill::None ? "none" : plan.rectCount ? "filled"
+                        : plan.fill == gpu::bars::Fill::Vignette || plan.fill == gpu::bars::Fill::Layer ? "stretched" : "matched, nothing to fill",
+                    (unsigned long long)s_vs->hash, (unsigned long long)s_ps->hash, count, v0 / 4);
+            }
+        }
 
         // Get() for a whole draw, written straight into the ring: `out16`
         // keeps 16-bit indices (the pipeline's restart index is then 0xFFFF,
@@ -5193,7 +5422,7 @@ void main()
                     // frame. Blind: a cut inside another (their union is the
                     // larger). Needless (costing only the saving): a band only
                     // a clear covered, a target drawn since by non-untiled draws.
-                    if (s_untiledArea && source->cut && !source->wholeArea)
+                    if (s_untiledArea && source->cut && !source->wholeArea && gpu::split_views::FallsBack(SplitFrame()))
                     {
                         auto [shiftX, shiftY] = TileShift();
                         int32_t x0 = source->scale.x.EdgeAt(r.x0 + shiftX);
@@ -6027,6 +6256,10 @@ void main()
         // switches between them, e.g. around movies).
         Image s_front, s_frontScaled;
         uint32_t s_frontWidth = 0, s_frontHeight = 0, s_frontScaledWidth = 0, s_frontScaledHeight = 0;
+        // The same for in-between pictures (game/hfr.h), so the real picture
+        // right after one doesn't overwrite it before the presenter has read it.
+        Image s_frontBetween, s_frontBetweenScaled;
+        uint32_t s_frontBetweenWidth = 0, s_frontBetweenHeight = 0, s_frontBetweenScaledWidth = 0, s_frontBetweenScaledHeight = 0;
 
         // A front image the presenter may still show or be reading: taken
         // back from it, then destroyed once the queue is idle.
@@ -6855,7 +7088,10 @@ void main()
             VkQueryPoolCreateInfo qpci{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
             qpci.queryType = VK_QUERY_TYPE_TIMESTAMP;
             qpci.queryCount = kSlots * 2;
-            if (const char* v = std::getenv("NFSMW_GPU_TIMING"); v && v[0] == '1')
+            // HFR (game/hfr.h) needs the GPU's execution time for its load
+            // check: the busy time (submit to seen done) counts the queue's
+            // waits too, and read 9-12 ms a frame where execution took 5-8.
+            if (const char* v = std::getenv("NFSMW_GPU_TIMING"); (v && v[0] == '1') || (!(v && v[0] == '0') && hfr::Enabled()))
                 if (vkCreateQueryPool(s_dev, &qpci, nullptr, &s_timestamps) != VK_SUCCESS)
                     s_timestamps = VK_NULL_HANDLE;
             if (s_profileFrame >= 0)
@@ -6934,6 +7170,11 @@ void main()
         return true;
     }
 
+    uint64_t CoverHits()
+    {
+        return s_coverHits.load(std::memory_order_relaxed);
+    }
+
     bool Enabled()
     {
         return s_vk != nullptr;
@@ -7003,6 +7244,214 @@ void main()
         if (e)
             e->shader = slot.get();
         (type == 0 ? s_vs : s_ps) = slot.get();
+    }
+
+    // DIAG (v0.1.5 HFR scoping): NFSMW_HFR_DRAWMATCH=<from s>,<frames>. For <frames> consecutive frames from <from s>
+    // after launch, each draw's identity (shaders, primitive type and count, render/depth target, textures) and hashes
+    // of the float constants its shaders read; at each swap one [drawmatch] line compares the frame with the one before:
+    // draws whose identity is unique in both frames, repeated identities (matched in order), and identities the
+    // previous frame lacks; for the matched draws, how many kept their constants, and how many read a vertex buffer at
+    // another address (dynamic vertex data: particles, text).
+    namespace
+    {
+        struct HfrConst { uint16_t index; uint32_t v[4]; };
+        struct HfrDraw { uint64_t key, vsc, psc, vb; bool rel; std::vector<HfrConst> vs; };
+        // The first draw of the frame that reads VS c26 (the per-render toggle the study found): its shader and value.
+        struct HfrC26 { bool seen = false; uint64_t vs = 0; float v[4] = {}; };
+        HfrC26 s_hfrC26;
+        struct HfrDrawMatch
+        {
+            double fromS = -1;
+            uint32_t frames = 0, done = 0;
+            bool active = false;
+            std::vector<HfrDraw> cur, prev;
+            std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+            HfrDrawMatch()
+            {
+                if (const char* v = std::getenv("NFSMW_HFR_DRAWMATCH"))
+                {
+                    fromS = std::atof(v);
+                    const char* c = std::strchr(v, ',');
+                    frames = c ? uint32_t(std::atoi(c + 1)) : 30u;
+                    fprintf(stderr, "[drawmatch] DIAGNOSTIC: %u frames from %.1f s\n", frames, fromS);
+                }
+            }
+        } s_hfrDm;  // command processor thread only
+
+        bool HfrDrawMatchActive()
+        {
+            return s_hfrDm.active;
+        }
+
+        void HfrDrawMatchRecord(uint64_t key, uint64_t vsc, uint64_t psc, uint64_t vb, bool rel, std::vector<HfrConst>&& vs)
+        {
+            if (!s_hfrC26.seen)
+                for (const HfrConst& c : vs)
+                    if (c.index == 26)
+                    {
+                        s_hfrC26.seen = true;
+                        memcpy(s_hfrC26.v, c.v, 16);
+                    }
+            s_hfrDm.cur.push_back({ key, vsc, psc, vb, rel, std::move(vs) });
+        }
+
+        void HfrDrawMatchSwap(uint64_t frame)
+        {
+            HfrDrawMatch& d = s_hfrDm;
+            if (d.fromS < 0 || d.done > d.frames)
+                return;
+            if (!d.active)
+            {
+                if (std::chrono::duration<double>(std::chrono::steady_clock::now() - d.t0).count() >= d.fromS)
+                {
+                    d.active = true;
+                    d.cur.clear();
+                }
+                return;
+            }
+            if (!d.prev.empty())
+            {
+                std::unordered_map<uint64_t, std::vector<const HfrDraw*>> before, now;
+                for (auto& x : d.prev)
+                    before[x.key].push_back(&x);
+                for (auto& x : d.cur)
+                    now[x.key].push_back(&x);
+                uint32_t unique = 0, ordered = 0, unmatched = 0, countChanged = 0, same = 0, vsChanged = 0, psOnly = 0,
+                         vbMoved = 0, rel = 0, relChanged = 0;
+                for (auto& [key, list] : now)
+                {
+                    auto it = before.find(key);
+                    if (it == before.end())
+                    {
+                        unmatched += uint32_t(list.size());
+                        continue;
+                    }
+                    if (it->second.size() != list.size())
+                        countChanged += uint32_t(list.size());
+                    const size_t n = std::min(list.size(), it->second.size());
+                    unmatched += uint32_t(list.size() - n);
+                    for (size_t i = 0; i < n; i++)
+                    {
+                        const HfrDraw &a = *it->second[i], &b = *list[i];
+                        (list.size() == 1 && it->second.size() == 1 ? unique : ordered)++;
+                        if (a.vsc == b.vsc && a.psc == b.psc)
+                            same++;
+                        else if (a.vsc != b.vsc)
+                            vsChanged++;
+                        else
+                            psOnly++;
+                        if (a.vb != b.vb)
+                            vbMoved++;
+                        if (b.rel)
+                        {
+                            rel++;
+                            if (a.vsc != b.vsc)
+                                relChanged++;
+                        }
+                    }
+                }
+                // Which VS constants changed between matched draws, and by how much (largest |difference|).
+                {
+                    std::map<uint16_t, std::pair<uint32_t, uint32_t>> seenChanged;  // index -> (draws reading it, changed)
+                    std::map<uint16_t, float> maxDiff;
+                    for (auto& [key, list] : now)
+                    {
+                        auto it = before.find(key);
+                        if (it == before.end())
+                            continue;
+                        const size_t n = std::min(list.size(), it->second.size());
+                        for (size_t i = 0; i < n; i++)
+                        {
+                            const HfrDraw &a = *it->second[i], &b = *list[i];
+                            if (a.vs.size() != b.vs.size())
+                                continue;
+                            for (size_t k = 0; k < b.vs.size(); k++)
+                            {
+                                auto& e = seenChanged[b.vs[k].index];
+                                e.first++;
+                                if (memcmp(a.vs[k].v, b.vs[k].v, 16) != 0)
+                                {
+                                    e.second++;
+                                    for (int c = 0; c < 4; c++)
+                                    {
+                                        float fa, fb;
+                                        memcpy(&fa, &a.vs[k].v[c], 4);
+                                        memcpy(&fb, &b.vs[k].v[c], 4);
+                                        if (std::isfinite(fa) && std::isfinite(fb))
+                                            maxDiff[b.vs[k].index] = std::max(maxDiff[b.vs[k].index], std::abs(fa - fb));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::vector<std::pair<uint32_t, uint16_t>> top;
+                    for (auto& [idx, e] : seenChanged)
+                        if (e.second)
+                            top.push_back({ e.second, idx });
+                    std::sort(top.rbegin(), top.rend());
+                    std::string t;
+                    for (size_t i = 0; i < std::min<size_t>(top.size(), 12); i++)
+                    {
+                        const auto& e = seenChanged[top[i].second];
+                        t += std::format(" c{} {}/{} (max {:.3g})", top[i].second, e.second, e.first, maxDiff[top[i].second]);
+                    }
+                    fprintf(stderr, "[drawmatch] frame %llu VS constants changed most:%s | c26 %s\n", (unsigned long long)frame, t.c_str(),
+                        s_hfrC26.seen ? std::format("{:.6g},{:.6g},{:.6g},{:.6g}", s_hfrC26.v[0], s_hfrC26.v[1], s_hfrC26.v[2], s_hfrC26.v[3]).c_str() : "-");
+                }
+                const double total = double(d.cur.size());
+                auto pct = [&](uint32_t v) { return total > 0 ? 100.0 * v / total : 0.0; };
+                fprintf(stderr, "[drawmatch] frame %llu: %zu draws (previous %zu), %zu identities | matched unique %.1f%%, "
+                                "repeated identities matched in order %.1f%% (identity count changed: %.1f%%), unmatched %.1f%% | of "
+                                "the matched: constants unchanged %.1f%%, VS constants changed %.1f%%, PS only %.1f%%, vertex "
+                                "buffer moved %.1f%%; relative-constant (palette) VS %u, %u changed\n",
+                    (unsigned long long)frame, d.cur.size(), d.prev.size(), now.size(), pct(unique), pct(ordered), pct(countChanged),
+                    pct(unmatched), pct(same), pct(vsChanged), pct(psOnly), pct(vbMoved), rel, relChanged);
+            }
+            // NFSMW_HFR_C26SCAN=1 (DIAGNOSTIC, M2): in the first two frames,
+            // where in guest memory c26's x, y, z sit (big-endian floats, in a
+            // row): the variable the game sets it from.
+            static const bool scan = [] { const char* v = std::getenv("NFSMW_HFR_C26SCAN"); return v && v[0] == '1'; }();
+            if (scan && s_hfrC26.seen && d.done < 2 && (s_hfrC26.v[0] != 0.0f || s_hfrC26.v[1] != 0.0f))
+            {
+                uint8_t pattern[12];
+                for (int k = 0; k < 3; k++)
+                {
+                    uint32_t bits;
+                    memcpy(&bits, &s_hfrC26.v[k], 4);
+                    bits = __builtin_bswap32(bits);
+                    memcpy(pattern + k * 4, &bits, 4);
+                }
+                std::string hits;
+                uint32_t count = 0;
+                auto scanRange = [&](uint32_t from, uint32_t size, const char* where) {
+                    const uint8_t* p = g_memory.base + from;
+                    for (uint32_t i = 0; i + 12 <= size && count < 16; i += 4)
+                        if (!memcmp(p + i, pattern, 12))
+                        {
+                            hits += std::format(" {:08X} ({})", from + i, where);
+                            count++;
+                        }
+                };
+                for (vmem::PageHeap* heap : { &vmem::Virtual4K(), &vmem::Virtual64K(), &vmem::Physical() })
+                    for (uint32_t a = heap->Base(); a < heap->End();)
+                    {
+                        vmem::RegionInfo info{};
+                        if (!heap->Query(a, &info) || !info.regionSize)
+                            break;
+                        if (info.state & vmem::X_MEM_COMMIT)
+                            scanRange(info.baseAddress, info.regionSize, heap == &vmem::Physical() ? "phys" : "virt");
+                        a = info.baseAddress + info.regionSize;
+                    }
+                scanRange(0x82000000u, 0x00CD0000u, "xex");
+                fprintf(stderr, "[drawmatch] frame %llu: c26's x, y, z in guest memory at:%s\n", (unsigned long long)frame,
+                    hits.empty() ? " nowhere" : hits.c_str());
+            }
+            d.prev.swap(d.cur);
+            d.cur.clear();
+            s_hfrC26 = {};
+            if (++d.done > d.frames)
+                d.active = false;
+        }
     }
 
     void Draw(uint32_t initiatorValue, uint32_t dmaBase, uint32_t dmaSizeValue)
@@ -7436,6 +7885,67 @@ void main()
         {
             constexpr uint32_t kSnapshotMax = 64 * 1024;
             using Range = SnapshotRange;
+            // HFR M3: the draw's vertex indices (with VGT_INDX_OFFSET), for a
+            // large buffer the CPU rewrites (a triple-buffered dynamic one:
+            // the sprite batch's three 128,000-byte slots under one fetch
+            // constant), so only this draw's vertices' records are copied or
+            // guarded and the CPU can fill the next slot while the GPU reads
+            // this one (the guard stalled sub_82445198 there 2.3 ms a second
+            // at 120 fps on the M1 Pro: M3's run d4a). Indexed draws are
+            // scanned up to kNarrowScan indices; static buffers (no CPU write
+            // since their last draw) keep the whole range.
+            constexpr uint32_t kNarrowScan = 4096;
+            int64_t vertexMin = -1, vertexMax = -1;  // -2: unknown
+            auto drawVertices = [&]() {
+                if (vertexMin != -1)
+                    return vertexMin >= 0;
+                vertexMin = vertexMax = -2;
+                const uint32_t first = s_regs[XE_GPU_REG_VGT_INDX_OFFSET];
+                if (count == 0)
+                    return false;
+                if (!src.indexed)
+                {
+                    vertexMin = int64_t(first);
+                    vertexMax = int64_t(first) + count - 1;
+                    return true;
+                }
+                if (count > kNarrowScan || uint64_t(src.base) + uint64_t(count) * (src.is32 ? 4 : 2) > kSharedSize)
+                    return false;
+                uint32_t lo = ~0u, hi = 0;
+                for (uint32_t i = 0; i < count; i++)
+                {
+                    const uint32_t v = src.Get(i);
+                    if (restartEnabled && v == resetIndex)
+                        continue;
+                    lo = std::min(lo, v);
+                    hi = std::max(hi, v);
+                }
+                if (lo > hi)
+                    return false;
+                vertexMin = int64_t(lo) + first;
+                vertexMax = int64_t(hi) + first;
+                return true;
+            };
+            auto narrow = [&](Range& r, uint32_t constant) {
+                const auto& info = s_vs->info;
+                const uint32_t stride = info.vertexStride[constant] * 4u, extent = info.vertexExtent[constant] * 4u;
+                if (((info.vertexIndexOther[constant / 32] >> (constant % 32)) & 1) || stride == 0 || extent == 0)
+                    return;
+                // Static buffers keep the whole range (no scan for them).
+                if (src.indexed && !DynamicVertexRange(r.base, r.size))
+                    return;
+                if (!drawVertices())
+                    return;
+                const uint64_t lo = uint64_t(vertexMin) * stride, hi = uint64_t(vertexMax) * stride + std::max(stride, extent);
+                if (lo >= r.size)
+                    return;
+                const uint32_t newBase = r.base + uint32_t(lo), newEnd = r.base + uint32_t(std::min<uint64_t>(hi, r.size));
+                if (newEnd > newBase && newEnd - newBase < r.size)
+                {
+                    s_stats.narrowedRanges++;
+                    r = { newBase, newEnd - newBase };
+                }
+            };
             for (const Shader* shader : { s_vs, s_ps })
                 for (uint32_t word = 0; word < 3; word++)
                     for (uint32_t bits = shader->info.vertexFetchConstants[word]; bits; bits &= bits - 1)
@@ -7444,6 +7954,8 @@ void main()
                         const uint32_t* vf = &s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + constant * 2];
                         Range r{ vf[0] & 0x1FFFFFFC, ((vf[1] >> 2) & 0xFFFFFF) * 4 };
                         r.size = std::min<uint32_t>(r.size, uint32_t(kSharedSize) - r.base);
+                        if (r.size > kSnapshotMax && shader == s_vs && NarrowVerticesOn())
+                            narrow(r, constant);
                         if (r.size == 0 || std::any_of(copies, copies + copyCount, [&](const Range& c) { return c.base == r.base && c.size == r.size; }))
                             continue;
                         if (g_eagerWrites && r.size <= kSnapshotMax && copyCount < 4 &&
@@ -7637,7 +8149,18 @@ void main()
         // whole target): those targets keep the whole target from now on, as
         // this draw does, so they restart this once. (Checked before a vertex
         // barrier may end the pass: then it gives way a draw early.)
+        // In split screen (gpu/split_views.h) the second view's first draw
+        // restarts the pass over both instead (BeginPass), once a frame.
         if (untiledPass && untiledWhy != 4 && x1 > x0 && y1 > y0 && s_passActive && depth == s_passDepth &&
+            std::equal(color, color + 4, s_passColor) &&
+            !Contains(s_passArea, HostRect(scale, x0, y0, x1, y1)) && !gpu::split_views::FallsBack(SplitFrame()))
+        {
+            const VkRect2D want = HostRect(scale, x0, y0, x1, y1);
+            LogOnce(0x35ull << 56, "split screen: frame %llu: a draw cut to %ux%u@%d,%d restarts its targets' pass (area %ux%u@%d,%d) over "
+                "both (scale %.2fx%.2f)", (unsigned long long)s_frame, want.extent.width, want.extent.height, want.offset.x, want.offset.y,
+                s_passArea.extent.width, s_passArea.extent.height, s_passArea.offset.x, s_passArea.offset.y, scaleX, scaleY);
+        }
+        else if (untiledPass && untiledWhy != 4 && x1 > x0 && y1 > y0 && s_passActive && depth == s_passDepth &&
             std::equal(color, color + 4, s_passColor) &&
             !Contains(s_passArea, HostRect(scale, x0, y0, x1, y1)))
         {
@@ -7726,7 +8249,8 @@ void main()
                     if (x1 <= x0 || y1 <= y0)
                         continue;
                     const VkRect2D& was = rt->cutDrawn;
-                    if (was.extent.width && !Contains(was, drew) && !Contains(drew, was) && !Adjoins(was, drew))
+                    if (was.extent.width && !Contains(was, drew) && !Contains(drew, was) && !Adjoins(was, drew) &&
+                        gpu::split_views::FallsBack(SplitFrame()))
                     {
                         rt->wholeArea = true;
                         LogOnce((0x34ull << 56) | (uint64_t(rt->base) << 24) | (uint64_t(rt->pitch) << 1) | uint64_t(rt->depth),
@@ -7904,6 +8428,10 @@ void main()
                 };
                 plan = gpu::bars::PlanVignette(draw, read, texel);
             }
+            // A flat full-screen layer short of the screen's edges (the fade
+            // to black before a load): stretched to them (gpu/edge_bars.h).
+            if (plan.fill == gpu::bars::Fill::None)
+                plan = gpu::bars::PlanLayer(draw, read);
             return plan;
         };
         auto logEdgeFill = [&](const gpu::bars::Plan& barPlan, float aspectX, float aspectY) {
@@ -7916,10 +8444,11 @@ void main()
             const bool blackout = barPlan.fill == gpu::bars::Fill::Blackout;
             const bool backdrop = barPlan.fill == gpu::bars::Fill::Backdrop;
             const bool vignette = barPlan.fill == gpu::bars::Fill::Vignette;
+            const bool layer = barPlan.fill == gpu::bars::Fill::Layer;
             const gpu::bars::Box& box = barPlan.box;
             const uint64_t key = (0x36ull << 56) | (uint64_t(kind) << 40) | (uint64_t(barPlan.rectCount) << 36) |
                 (uint64_t(std::lround(aspectX * 4096.0f)) << 18) | uint64_t(std::lround(aspectY * 4096.0f));
-            static uint64_t loggedKey[6] = { ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull };
+            static uint64_t loggedKey[7] = { ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull };
             if (loggedKey[kind] != key)
             {
                 loggedKey[kind] = key;
@@ -7930,26 +8459,27 @@ void main()
                             : blackout ? "outside it (past the 16:9 band, and the band's border round it)" : "past the 16:9 band", barPlan.rects[0].x0,
                         barPlan.rects[0].x1, barPlan.rects[0].y0, barPlan.rects[0].y1);
                 else
-                    snprintf(fills, sizeof(fills), "%s", vignette ? "stretched to the screen's edges"
+                    snprintf(fills, sizeof(fills), "%s", vignette || layer ? "stretched to the screen's edges"
                         : blackout || backdrop ? "fills nothing" : "reaches the screen edge: nothing to fill");
                 LogOnce(key,
                     "edge bars: frame %llu vs_%016llx ps_%016llx: %s (clip x %.3f..%.3f y %.3f..%.3f, colour %08X; view scale x %.4f y %.4f) %s",
                     (unsigned long long)s_frame, (unsigned long long)s_vs->hash, (unsigned long long)s_ps->hash,
-                    vignette ? "the Showcase's vignette (clear in the middle)" : backdrop ? "a full-band backdrop (black outside it)"
+                    vignette ? "the Showcase's vignette (clear in the middle)" : layer ? "a full-screen layer short of the screen's edges (a fade)"
+                        : backdrop ? "a full-band backdrop (black outside it)"
                         : blackout ? "a black frame" : kind == uint32_t(gpu::bars::Fill::RightBar) ? "the right vid-cam bar" : "the left vid-cam bar",
                     box.x0, box.x1, box.y0, box.y1, barPlan.argb, aspectX, aspectY, fills);
             }
             // NFSMW_LOG_FRONTEND=1: the first frame of each run of frames
             // with a match, bars and black frames apart (one run per vid-cam
             // scene and per cut; any other is a draw this should not take).
-            static uint64_t lastBarFrame[4] = { ~0ull - 1, ~0ull - 1, ~0ull - 1, ~0ull - 1 };
-            uint64_t& last = lastBarFrame[vignette ? 3 : backdrop ? 2 : blackout ? 1 : 0];
+            static uint64_t lastBarFrame[5] = { ~0ull - 1, ~0ull - 1, ~0ull - 1, ~0ull - 1, ~0ull - 1 };
+            uint64_t& last = lastBarFrame[layer ? 4 : vignette ? 3 : backdrop ? 2 : blackout ? 1 : 0];
             if (logFrontEnd && s_frame != last && s_frame != last + 1)
             {
                 xenos::xe_gpu_texture_fetch_t t0;
                 memcpy(&t0, &s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0], sizeof(t0));
                 fprintf(stderr, "[frontend] edge bars: matching from frame %llu: %s x %.3f..%.3f y %.3f..%.3f colour %08X blend %08X t0 %08X %ux%u, %u rect(s)\n",
-                    (unsigned long long)s_frame, vignette ? "vignette" : backdrop ? "backdrop" : blackout ? "black frame"
+                    (unsigned long long)s_frame, layer ? "layer" : vignette ? "vignette" : backdrop ? "backdrop" : blackout ? "black frame"
                         : kind == uint32_t(gpu::bars::Fill::RightBar) ? "right bar" : "left bar",
                     box.x0, box.x1, box.y0, box.y1, barPlan.argb, s_regs[XE_GPU_REG_RB_BLENDCONTROL0] & 0x1FFF1FFF,
                     (uint32_t(t0.base_address) << 12) & 0x1FFFFFFFu, uint32_t(t0.size_2d.width) + 1, uint32_t(t0.size_2d.height) + 1,
@@ -8269,6 +8799,9 @@ void main()
                     {
                         barPlan = planEdgeFills(c, feY, s, sv, feShader, kX == 1.0f && kY == 1.0f && kCover == 1.0f && !clipped);
                         logEdgeFill(barPlan, s, sv);
+                        // A layer short of the screen's edges, stretched to them.
+                        if (barPlan.fill == gpu::bars::Fill::Layer)
+                            memcpy(pc.posScale, barPlan.posScale, sizeof(pc.posScale));
                         if (barPlan.fill == gpu::bars::Fill::Vignette)
                             memcpy(pc.posScale, barPlan.posScale, sizeof(pc.posScale));
                     }
@@ -8322,6 +8855,7 @@ void main()
                         if (perT0Edge >= 4)
                             continue;
                         const std::string action = barPlan.fill == gpu::bars::Fill::Vignette ? std::string("vignette stretched to the screen's edges")
+                            : barPlan.fill == gpu::bars::Fill::Layer ? std::string("layer stretched to the screen's edges")
                             : barPlan.rectCount
                             ? std::string(barPlan.fill == gpu::bars::Fill::Backdrop ? "backdrop fill"
                                     : barPlan.fill == gpu::bars::Fill::Blackout ? "black frame fill" : "bar fill")
@@ -8441,11 +8975,23 @@ void main()
                         (vi.constRelative || (vi.constUsed[0] & 0xFull) == 0xFull);
                     barPlan = planEdgeFills(c, game::FrontEndScaleY(), s, sv, feShader, true);
                     logEdgeFill(barPlan, s, sv);
+                    if (barPlan.fill == gpu::bars::Fill::Layer)
+                        memcpy(pc.posScale, barPlan.posScale, sizeof(pc.posScale));
                     if (barPlan.fill == gpu::bars::Fill::Vignette)
                         memcpy(pc.posScale, barPlan.posScale, sizeof(pc.posScale));
                 }
             }
         }
+        // NFSMW_LOG_COVERS=1 (gpu/covers.h): each quad of a front-end draw
+        // (any screen shape), as drawn after the rules above, against the
+        // guest viewport the presenter shows: a dark box inside it, a dark
+        // layer short of its edges, or a layer authored to cover the 16:9
+        // frame that stops short of the picture's edges. Once per draw site
+        // (the guest code that built the quad, game/cover_callers.h), kind,
+        // extent (to 1% of the picture) and opacity; 512 lines at most.
+        if (game::covers::Enabled())
+            LogCovers(count, uint32_t(initiator.prim_type), src, pc.posScale, scissor, w * float(scaleX), h * float(scaleY), float(scaleX),
+                float(scaleY), barPlan);
         // NFSMW_LOG_DRAWS=<seconds>: every draw of one frame (target, viewport,
         // scissor, textures, shaders), consecutive duplicates folded.
         if (s_logDrawsNow)
@@ -8460,6 +9006,8 @@ void main()
                     : barPlan.fill == gpu::bars::Fill::Blackout ? "black frame" : "bar", barPlan.rectCount);
             else if (barPlan.fill == gpu::bars::Fill::Vignette)
                 line += " +vignette stretched";
+            else if (barPlan.fill == gpu::bars::Fill::Layer)
+                line += " +layer stretched";
             static std::string last;
             static uint32_t repeats = 0;
             if (line == last)
@@ -8472,6 +9020,40 @@ void main()
                 last = line;
                 repeats = 0;
             }
+        }
+        // DIAG (v0.1.5 HFR scoping): NFSMW_HFR_DRAWMATCH=<from s>,<frames>: draw-list stability between consecutive
+        // frames ([drawmatch] at each swap), for judging interpolation at the GPU command level.
+        if (HfrDrawMatchActive())
+        {
+            auto mix = [](uint64_t h, uint64_t v) { h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2); return h * 0x100000001B3ull; };
+            uint64_t key = mix(mix(mix(s_vs->hash, s_ps->hash), uint64_t(initiator.prim_type) << 32 | count),
+                uint64_t(s_regs[XE_GPU_REG_RB_SURFACE_INFO]) << 32 | s_regs[XE_GPU_REG_RB_COLOR_INFO]);
+            key = mix(key, s_regs[XE_GPU_REG_RB_DEPTH_INFO]);
+            for (uint32_t n = 0; n < 32; n++)
+                if ((s_ps->info.texture2DMask | s_ps->info.texture3DMask | s_ps->info.textureCubeMask) & (1u << n))
+                    key = mix(key, s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + n * 6 + 1] & 0x1FFFF000u);
+            auto constHash = [&](const Shader* sh, uint32_t reg0) {
+                uint64_t h = 0;
+                for (uint32_t i = 0; i < 256; i++)
+                    if (sh->info.constRelative || (sh->info.constUsed[i >> 6] >> (i & 63) & 1))
+                        for (uint32_t k = 0; k < 4; k++)
+                            h = mix(h, uint64_t(i) << 40 | uint64_t(k) << 32 | s_regs[reg0 + i * 4 + k]);
+                return h;
+            };
+            uint64_t vb = 0;
+            for (uint32_t word = 0; word < 3; word++)
+                for (uint32_t bits = s_vs->info.vertexFetchConstants[word]; bits; bits &= bits - 1)
+                    vb = mix(vb, s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + (word * 32 + uint32_t(__builtin_ctz(bits))) * 2] & 0x1FFFFFFC);
+            std::vector<HfrConst> vsConsts;
+            for (uint32_t i = 0; i < 256; i++)
+                if (!s_vs->info.constRelative && (s_vs->info.constUsed[i >> 6] >> (i & 63) & 1))
+                {
+                    HfrConst c{ uint16_t(i), {} };
+                    for (uint32_t k = 0; k < 4; k++)
+                        c.v[k] = s_regs[0x4000 + i * 4 + k];
+                    vsConsts.push_back(c);
+                }
+            HfrDrawMatchRecord(key, constHash(s_vs, 0x4000), constHash(s_ps, 0x4400), vb, s_vs->info.constRelative, std::move(vsConsts));
         }
         pc.vsConstBase = 0;
         pc.psConstBase = 256;
@@ -8905,7 +9487,7 @@ void main()
         fprintf(stderr, "[zpd] %s: latest END counts:%s\n", what, line.empty() ? " none yet" : line.c_str());
     }
 
-    bool PresentFrontBuffer(const uint32_t fetch[6], uint32_t width, uint32_t height)
+    bool PresentFrontBuffer(const uint32_t fetch[6], uint32_t width, uint32_t height, float between, float shift, int64_t target)
     {
         if (!s_vk || width == 0 || height == 0)
             return false;
@@ -8938,9 +9520,10 @@ void main()
         bool scaled = pc.tiled && !showTexture[0] && s_scaled.enabled && s_scaled.scale.Exact(width, height) &&
             ScaledRangeValid(pc.base, frontBytes);
         uint32_t outW = scaled ? s_scaled.scale.x.Size(width) : width, outH = scaled ? s_scaled.scale.y.Size(height) : height;
-        Image& front = scaled ? s_frontScaled : s_front;
-        uint32_t& frontW = scaled ? s_frontScaledWidth : s_frontWidth;
-        uint32_t& frontH = scaled ? s_frontScaledHeight : s_frontHeight;
+        const bool b = between != 0.0f;
+        Image& front = scaled ? (b ? s_frontBetweenScaled : s_frontScaled) : (b ? s_frontBetween : s_front);
+        uint32_t& frontW = scaled ? (b ? s_frontBetweenScaledWidth : s_frontScaledWidth) : (b ? s_frontBetweenWidth : s_frontWidth);
+        uint32_t& frontH = scaled ? (b ? s_frontBetweenScaledHeight : s_frontScaledHeight) : (b ? s_frontBetweenHeight : s_frontHeight);
         if (outW != frontW || outH != frontH)
         {
             // A new size: wait for any use of the old image before replacing it.
@@ -8952,7 +9535,7 @@ void main()
             ToGeneral(front.image, VK_IMAGE_ASPECT_COLOR_BIT, 1);
             frontW = outW;
             frontH = outH;
-            fprintf(stderr, "[renderer] front image %ux%u (%s)\n", outW, outH, scaled ? "host resolution" : "1x");
+            fprintf(stderr, "[renderer] front image %ux%u (%s%s)\n", outW, outH, scaled ? "host resolution" : "1x", b ? ", in-between pictures" : "");
         }
         if (scaled)
         {
@@ -8988,11 +9571,16 @@ void main()
         GuardGpu(pc.base, frontBytes, false, "front buffer");
         FullBarrier();
         SubmitRecorded(7);  // the presenter's blit comes later in queue order
-        video::SubmitFrontImage(front.image, outW, outH, width, height);
+        video::SubmitFrontImage(front.image, outW, outH, width, height, between, shift, target);
         // Back at 1x (a live change): the host-resolution image is no longer
         // needed. The presenter has this frame to show instead.
-        if (!scaled && s_frontScaled.image && s_renderScale.IsOne())
-            DestroyFrontImage(s_frontScaled, s_frontScaledWidth, s_frontScaledHeight);
+        if (!scaled && s_renderScale.IsOne())
+        {
+            if (!b && s_frontScaled.image)
+                DestroyFrontImage(s_frontScaled, s_frontScaledWidth, s_frontScaledHeight);
+            if (b && s_frontBetweenScaled.image)
+                DestroyFrontImage(s_frontBetweenScaled, s_frontBetweenScaledWidth, s_frontBetweenScaledHeight);
+        }
         if (g_eagerWrites)
         {
             // With fences published early nothing else keeps the GPU from
@@ -9065,6 +9653,7 @@ void main()
 
     void OnSwap(uint64_t frame)
     {
+        HfrDrawMatchSwap(frame);  // DIAG (v0.1.5 HFR scoping)
         if (s_vk)
             ApplyLiveSettings();
         if (s_uploadLog)
@@ -9409,7 +9998,7 @@ void main()
             m.textureCount++;
         }
         m.scaled = s_scaled.poolBytes + s_scaled.tableBytes + s_scaled.scratchBytes;
-        m.front = s_front.bytes + s_frontScaled.bytes;
+        m.front = s_front.bytes + s_frontScaled.bytes + s_frontBetween.bytes + s_frontBetweenScaled.bytes;
         auto own = [&m](const Image& image) {
             if (image.memory && !image.block)
             {
@@ -9421,7 +10010,7 @@ void main()
             own(rt->image);
         for (const auto& [key, t] : s_textures)
             own(t->image);
-        for (const Image* image : { &s_front, &s_frontScaled, &s_dummy[0], &s_dummy[1], &s_dummy[2], &s_dummyStorage })
+        for (const Image* image : { &s_front, &s_frontScaled, &s_frontBetween, &s_frontBetweenScaled, &s_dummy[0], &s_dummy[1], &s_dummy[2], &s_dummyStorage })
             own(*image);
         for (const auto& block : s_blocks)
         {

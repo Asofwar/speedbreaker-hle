@@ -34,6 +34,10 @@ namespace gpu::renderer
     bool Initialize(const uint32_t* regs);
     bool Enabled();
 
+    // NFSMW_LOG_COVERS=1 (gpu/covers.h): the lines logged so far (each a new
+    // place).
+    uint64_t CoverHits();
+
     // IM_LOAD / IM_LOAD_IMMEDIATE: `words` in guest (big-endian) order.
     void LoadShader(uint32_t type, const uint32_t* words, uint32_t dwords);
 
@@ -74,7 +78,13 @@ namespace gpu::renderer
 
     // XE_SWAP: convert the front buffer (its texture fetch constant) into an
     // image on the GPU and hand it to the presenter. False when headless.
-    bool PresentFrontBuffer(const uint32_t fetch[6], uint32_t width, uint32_t height);
+    // `between`: an in-between picture's fraction of the step (game/hfr.h; 0:
+    // a real picture), which gets an image of its own.
+    // `shift`: a real picture shown that much of a vblank early (a step drawn
+    // only between, its own picture's fraction minus 1; 0 otherwise).
+    // `target`: when to show it (video::SubmitFrontImage's).
+    bool PresentFrontBuffer(const uint32_t fetch[6], uint32_t width, uint32_t height, float between = 0.0f, float shift = 0.0f,
+        int64_t target = 0);
 
     // After each swap (NFSMW_PASS_PROFILE=<frame> prints that frame's passes).
     void OnSwap(uint64_t frame);
@@ -83,6 +93,7 @@ namespace gpu::renderer
     struct Stats
     {
         uint64_t draws, skipped, resolves, submits, pipelines, uploads, gpuBusyUs, passes, constantUploads, gpuExecUs, tileSkips, snapshotBytes, shadowWaits, shaderCacheHits, pipelineSkips, lateFrames;
+        uint64_t narrowedRanges;  // HFR M3: large vertex ranges copied or guarded as the draw's vertices only
     };
     Stats GetStats();
     // The scaled data path (internal resolution above 1x), totals so far:
