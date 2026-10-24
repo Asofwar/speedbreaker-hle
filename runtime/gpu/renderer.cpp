@@ -2043,11 +2043,8 @@ namespace gpu::renderer
                 slot += uint32_t(__builtin_popcountll(used[n / 64] & ((1ull << (n % 64)) - 1)));
                 return reinterpret_cast<float*>(c + slot * 16);
             };
-            static constexpr float kNeutral[4][4] = { { 0, 1, 1, 1 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } };
-            for (uint32_t k = 0; k < 4; k++)
-                if (float* v = at(6 + k))
-                    for (uint32_t i = 0; i < 4; i++)
-                        v[i] += (kNeutral[k][i] - v[i]) * f;
+            // (The curve itself, c6..c9, is moved where the game sends it, in
+            // every scene: game/colour_grade.cpp.)
             if (float* v = at(1))
                 v[0] *= 1.0f - f;
         }

@@ -176,6 +176,23 @@ PPC_FUNC(sub_82449820)
                 }
             }
         }
+        // Settings > Graphics > Color Filter, here too, so in every scene
+        // (the race's, the pursuits', the cutscenes' variants all take this
+        // block): the curve moved toward the neutral one, A0 (0, 1, 1, 1) and
+        // the rest zeros (all of the way: Off, half: Soft; the curve is linear
+        // in its coefficients). Its vignette stays the renderer's
+        // (gpu/renderer.cpp's ColorFilterConstants).
+        const auto filter = settings::ColorFilterMode(settings::GetInt(settings::Id::ColorFilter));
+        if (filter != settings::ColorFilterMode::Original)
+        {
+            const float f = filter == settings::ColorFilterMode::Off ? 1.0f : 0.5f;
+            for (int i = 0; i < 16; i++)
+            {
+                const float neutral = i == 1 || i == 2 || i == 3 ? 1.0f : 0.0f;
+                const float v = ToFloat(out[i]);
+                out[i] = ToBits(v + (neutral - v) * f);
+            }
+        }
         memcpy(s_state.written, out, sizeof(out));
         for (int i = 0; i < 16; i++)
             PPC_STORE_U32(block + i * 4, out[i]);

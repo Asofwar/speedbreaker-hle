@@ -358,7 +358,7 @@ namespace settings
               .env = "NFSMW_RESOLUTION", .defaultValue = kResolutionAuto, .entries = kResolutionEntries },
             { .id = Id::ColorFilter, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
               .table = "video", .key = "color_filter", .label = "Color Filter",
-              .description = "Most Wanted's yellow-green tint, its desaturation and its vignette in races and free roam. "
+              .description = "Most Wanted's yellow-green tint and its desaturation, in every scene, and its vignette in races and free roam. "
                   "Original: as on the Xbox 360. Soft: half as strong. Off: none (the glow and the fades stay).",
               .env = "NFSMW_COLOR_FILTER", .defaultValue = double(ColorFilterMode::Original), .entries = kColorFilterEntries },
             { .id = Id::AmbientOcclusion, .category = Category::Graphics, .type = Type::Float, .apply = Apply::Live,
