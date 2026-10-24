@@ -888,15 +888,15 @@ static void TestParse()
     CHECK(half.x.Size(1280) == 1920 && half.y.Size(720) == 1080 && half.SlotWords() == 2304 && half.PixelsNum() == 9 && half.PixelsDen() == 4,
         "1.5x: %ux%u, %u words a page", half.x.Size(1280), half.y.Size(720), half.SlotWords());
     CHECK(half.Exact(1280, 720) && !half.Exact(1279, 720) && !half.Exact(640, 359) && RenderScale::Whole(2, 2).Exact(1279, 359), "exact");
-    // The setting's eighths (settings.h): the seven entries, nothing else.
+    // The setting's eighths (settings.h): the eight entries, nothing else.
     struct Eighth { uint32_t value; AxisScale want; };
     for (const Eighth& e : { Eighth{ 4, { 1, 2 } }, Eighth{ 5, { 5, 8 } }, Eighth{ 6, { 3, 4 } }, Eighth{ 8, { 1, 1 } }, Eighth{ 12, kHalf },
-             Eighth{ 16, { 2, 1 } }, Eighth{ 24, { 3, 1 } } })
+             Eighth{ 16, { 2, 1 } }, Eighth{ 24, { 3, 1 } }, Eighth{ 32, { 4, 1 } } })
     {
         AxisScale got{ 7, 7 };
         CHECK(gpu::AxisFromEighths(e.value, got) && got == e.want, "eighths %u: %u/%u", e.value, got.num, got.den);
     }
-    for (uint32_t v : { 0u, 1u, 2u, 3u, 7u, 9u, 10u, 20u, 32u, 64u })
+    for (uint32_t v : { 0u, 1u, 2u, 3u, 7u, 9u, 10u, 20u, 40u, 64u })
     {
         AxisScale got;
         CHECK(!gpu::AxisFromEighths(v, got), "eighths %u accepted", v);

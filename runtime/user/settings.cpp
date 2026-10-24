@@ -130,6 +130,7 @@ namespace settings
             { 12, "1.5x", "1.5x (1080p)" },
             { 16, "2x", "2x (1440p)" },
             { 24, "3x", "3x (2160p)" },
+            { 32, "4x", "4x (2880p)" },
         };
 
         constexpr EnumEntry kColorFilterEntries[] = {

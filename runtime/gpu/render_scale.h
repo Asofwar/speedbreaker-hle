@@ -347,12 +347,12 @@ namespace gpu
 
     // The scales offered, in eighths (the Internal Resolution setting's
     // values, settings.h): 4 0.5x, 5 0.625x, 6 0.75x, 8 1x, 12 1.5x, 16 2x,
-    // 24 3x. True with the axis, reduced (6/8 is 3/4); false for any other.
+    // 24 3x, 32 4x. True with the axis, reduced (6/8 is 3/4); false for any other.
     inline bool AxisFromEighths(uint32_t eighths, AxisScale& out)
     {
         switch (eighths)
         {
-        case 4: case 5: case 6: case 8: case 12: case 16: case 24:
+        case 4: case 5: case 6: case 8: case 12: case 16: case 24: case 32:
         {
             const uint32_t g = std::gcd(eighths, 8u);
             out = { eighths / g, 8 / g };
