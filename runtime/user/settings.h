@@ -67,6 +67,7 @@ namespace settings
         ModernLighting,    // the tonemapper's strength (gpu/renderer.cpp)
         Tonemapper,        // 0 filmic, 1 AgX, 2 off (gpu/renderer.cpp)
         ShadowResolution,  // the sun shadow map's size (game/colour_grade.cpp)
+        ShadowScale,       // its host pixels a guest one, in eighths as InternalResolution (gpu/renderer.cpp)
         ShadowFiltering,   // ShadowFilteringMode: the game's own or PCSS (gpu/renderer.cpp)
         ReflectionRefresh, // how often the car reflection cube map's faces are redrawn (gpu/renderer.cpp)
         WindowWidth,   // hidden: the window's size, remembered between runs

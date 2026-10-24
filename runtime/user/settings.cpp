@@ -139,6 +139,14 @@ namespace settings
             { 800, "800", "800 (fastest)" },
         };
 
+        constexpr EnumEntry kShadowScaleEntries[] = {
+            { 8, "1x", "1x (original)" },
+            { 12, "1.5x", "1.5x" },
+            { 16, "2x", "2x" },
+            { 24, "3x", "3x" },
+            { 32, "4x", "4x" },
+        };
+
         constexpr EnumEntry kShadowFilteringEntries[] = {
             { int32_t(ShadowFilteringMode::Original), "original", "Original" },
             { int32_t(ShadowFilteringMode::Pcss), "pcss", "Soft (PCSS)" },
@@ -377,6 +385,10 @@ namespace settings
               .table = "video", .key = "shadow_resolution", .label = "Shadow Resolution",
               .description = "The size of the sun's shadow map. Smaller is faster (the shadow pass is about a fifth of a race frame) but softer. Changed in the game's own code where it creates the map. Applies from the next start.",
               .env = "NFSMW_SHADOW_SIZE", .defaultValue = 1600, .entries = kShadowEntries },
+            { .id = Id::ShadowScale, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Restart,
+              .table = "video", .key = "shadow_scale", .label = "Shadow Map Scale",
+              .description = "Draws the sun's shadow map at a higher resolution than the game's, whatever Internal Resolution is: sharper, steadier shadow edges for GPU time and memory (at 4x about 400 MB). Applies from the next start.",
+              .env = "NFSMW_SHADOW_SCALE", .defaultValue = 8, .entries = kShadowScaleEntries },
             { .id = Id::ShadowFiltering, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
               .table = "video", .key = "shadow_filtering", .label = "Shadow Filtering",
               .description = "Original: the game's own filter. Soft: shadows sharp where they touch what casts them and softer further away (PCSS). Costs some GPU time in the scene.",
