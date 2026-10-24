@@ -68,6 +68,16 @@ There is a Windows build too (`SpeedBreaker-windows-x86_64.zip` on the Releases 
 and start `SpeedBreaker.exe`. It began as [rafidwayne's port](https://github.com/SpeedBreakerProject/speedbreaker/pull/39);
 what it needs and how it is built: [docs/windows.md](docs/windows.md).
 
+More picture settings, all off or at the game's own values unless you change them:
+- Display: Contrast, Saturation, Color Temperature, Remove Orange Tint, Modern Look, Rich Blacks.
+- Graphics: Color Filter, Ambient Occlusion, Motion Blur, Bloom, Modern Lighting with a
+  Tonemapper (AgX or filmic), Shadow Resolution, Reflection Refresh, Internal Resolution up to 4x.
+- Advanced: Skip Startup Movies.
+
+Most of the shader work behind them comes from
+[AndhikaFW's fork](https://github.com/AndhikaFW/speedbreaker). Smooth Motion (upstream's frame
+interpolation) is offered on 120, 180 and 240 Hz screens on Windows and Linux as well.
+
 The scripts used on the Deck are in [survey/hle/deck](survey/hle/deck). Everything below this
 section is the original README.
 
@@ -92,6 +102,16 @@ section is the original README.
 
 Есть и сборка под Windows (`SpeedBreaker-windows-x86_64.zip` в релизах): распакуйте и запустите
 `SpeedBreaker.exe`. Подробности и сборка: [docs/windows.md](docs/windows.md).
+
+Больше настроек картинки. Пока их не трогать, всё выключено или стоит как в игре:
+- Display: контраст, насыщенность, цветовая температура, снятие оранжевого фильтра, Modern Look, глубокие тени.
+- Graphics: цветовой фильтр, Ambient Occlusion, Motion Blur, Bloom, Modern Lighting с тонмаппером
+  (AgX или filmic), разрешение теней, частота обновления отражений, внутреннее разрешение до 4x.
+- Advanced: пропуск заставок при запуске.
+
+Большая часть шейдерной работы взята из [форка AndhikaFW](https://github.com/AndhikaFW/speedbreaker).
+Smooth Motion (интерполяция кадров из основного проекта) теперь предлагается и на экранах
+120, 180 и 240 Гц под Windows и Linux.
 
 Как поставить на Steam Deck: скачайте `SpeedBreaker-steamos-x86_64.tar.xz` из релизов,
 распакуйте в `~/Games`, добавьте `~/Games/SpeedBreaker/speedbreaker.sh` в Steam как стороннюю
