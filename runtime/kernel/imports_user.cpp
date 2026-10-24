@@ -11,8 +11,11 @@
 #include <kernel/overlapped.h>
 #include <kernel/vfs.h>
 #include <kernel/xam.h>
+#include <ui/ui.h>
 #include <user/paths.h>
 
+#include <atomic>
+#include <chrono>
 #include <fstream>
 #include <map>
 
@@ -304,6 +307,15 @@ uint32_t XamUserCheckPrivilege(uint32_t userIndex, uint32_t privilege, be<uint32
         fprintf(stderr, "[live] privilege %u asked: granted\n", privilege);
         if (privilege == 254)  // multiplayer sessions: the player opened Xbox Live
             XamNotifyLiveConnected();
+    }
+    else if (privilege == 254)
+    {
+        // The game then says the profile may not play online, which reads like
+        // a broken profile: the way to turn it on, once in a while.
+        static std::atomic<int64_t> last{ INT64_MIN / 2 };
+        const int64_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (now - last.exchange(now) >= 30)
+            ui::Toast("Xbox Live is off: Settings > Online > Xbox Live (Host or Join), then restart SpeedBreaker.", 10.0);
     }
     return X_ERROR_SUCCESS;
 }
