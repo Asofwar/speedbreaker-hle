@@ -1565,7 +1565,7 @@ namespace settings
                         if (auto v = node.as_boolean())
                             rumbleNote = v->get();
                         else
-                            fprintf(stderr, "[settings] %s: %s = %s isn't true or false; ignored\n", path.filename().c_str(), name.c_str(),
+                            fprintf(stderr, "[settings] %s: %s = %s isn't true or false; ignored\n", path.filename().string().c_str(), name.c_str(),
                                 NodeText(node).c_str());
                         continue;
                     }
@@ -1812,7 +1812,7 @@ namespace settings
         ReadStatus status = ReadFile(path, text, error);
         if (status == ReadStatus::Failed)
         {
-            fprintf(stderr, "[settings] the rumble note isn't recorded: can't read %s: %s\n", path.c_str(), error.c_str());
+            fprintf(stderr, "[settings] the rumble note isn't recorded: can't read %s: %s\n", path.string().c_str(), error.c_str());
             return false;
         }
         if (status == ReadStatus::Missing)
