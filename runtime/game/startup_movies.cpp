@@ -13,12 +13,15 @@
 // (Checked by tracing the events of a run in which the four files were hidden: the game sent exactly this one event per movie from
 // this branch, lr 0x82283080, and never reached the code that starts a movie. Tried before that and not working: starting the movie
 // and failing its open inside the player; and pressing A, which skips the attract movie but not the three logos.)
+// A timedemo, captured or replayed, keeps the movies: its input log runs from launch, so a recording stays in step with its
+// replays whatever the setting.
 #include <stdafx.h>
 
+#include "timedemo.h"
 #include <kernel/function.h>
 #include <user/settings.h>
 
-#include <strings.h>
+#include <cctype>
 
 extern "C" PPC_FUNC(__imp__sub_82282F18);
 extern "C" PPC_FUNC(__imp__sub_822FEB98);  // sends an event to the screens that listen
@@ -29,11 +32,25 @@ namespace
     constexpr uint32_t kMessagePlayMovie = 7;
     constexpr uint32_t kMovieFinished = 0xC3960EB9;
 
+    // strcasestr, which Windows' C library does not have.
+    bool ContainsNoCase(const char* text, const char* word)
+    {
+        for (; *text; text++)
+        {
+            size_t i = 0;
+            while (word[i] && text[i] && std::tolower(uint8_t(text[i])) == std::tolower(uint8_t(word[i])))
+                i++;
+            if (!word[i])
+                return true;
+        }
+        return false;
+    }
+
     bool IsStartupMovie(const char* name)
     {
         static const char* const kNames[] = { "eahd_bumper", "ealogo", "psa", "attract_movie" };
         for (const char* n : kNames)
-            if (strcasestr(name, n))
+            if (ContainsNoCase(name, n))
                 return true;
         return false;
     }
@@ -54,7 +71,8 @@ namespace
 PPC_FUNC(sub_82282F18)
 {
     const uint32_t screen = ctx.r3.u32, message = ctx.r4.u32;
-    if (PPC_LOAD_U32(message + 24) == kMessagePlayMovie && settings::GetBool(settings::Id::SkipStartupMovies))
+    if (PPC_LOAD_U32(message + 24) == kMessagePlayMovie && settings::GetBool(settings::Id::SkipStartupMovies) &&
+        !timedemo::Active())
     {
         char name[96];
         size_t n = 0;
