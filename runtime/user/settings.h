@@ -64,6 +64,7 @@ namespace settings
         AmbientOcclusion,  // darkening in creases, from the depth buffer (gpu/renderer.cpp)
         MotionBlur,        // radial speed blur, race scenes (gpu/renderer.cpp)
         Bloom,             // the game's own bloom scale (game/colour_grade.cpp)
+        Glow,              // its bright-pass threshold, from 0.5 up (game/colour_grade.cpp)
         ModernLighting,    // the tonemapper's strength (gpu/renderer.cpp)
         Tonemapper,        // 0 filmic, 1 AgX, 2 off (gpu/renderer.cpp)
         ShadowResolution,  // the sun shadow map's size (game/colour_grade.cpp)

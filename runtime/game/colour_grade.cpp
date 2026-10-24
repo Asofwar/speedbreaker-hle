@@ -238,6 +238,25 @@ PPC_FUNC(sub_824491F8)
             }
         }
     }
+    // g_fBrightPassThreshold (0.5: what the bloom takes of the picture, the
+    // sky's haze most of all), looked up by name at 0x822232E4 in
+    // sub_822232xx and sent at 0x822232FC: raised by Settings > Graphics >
+    // Glow toward 0.95 (only the brightest lights and the sun still glow), an
+    // idea from NFSMW Recompiled's sky glow option.
+    if (ctx.lr == 0x822232FC)
+    {
+        const float glow = std::clamp(settings::GetFloat(settings::Id::Glow), 0.0f, 1.0f);
+        const uint32_t bits = PPC_LOAD_U32(ctx.r5.u32);
+        float v;
+        memcpy(&v, &bits, 4);
+        if (glow < 1.0f && std::isfinite(v) && v >= 0.0f && v < 0.95f)
+        {
+            v += (0.95f - v) * (1.0f - glow);
+            uint32_t out;
+            memcpy(&out, &v, 4);
+            PPC_STORE_U32(ctx.r5.u32, out);
+        }
+    }
     static const bool log = std::getenv("NFSMW_LOG_GRADE_SENDS") != nullptr;
     if (log && ctx.lr >= 0x82223BB8 && ctx.lr < 0x82224000)
     {
