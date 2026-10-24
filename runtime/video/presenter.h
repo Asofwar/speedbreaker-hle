@@ -15,6 +15,10 @@
 
 namespace video
 {
+    // NFSMW_LOG_COVERS=1 (gpu/covers.h): the picture lines logged so far
+    // (each a new box or layer).
+    uint64_t PictureCoverHits();
+
     // Main thread only (macOS requires windows there). Returns false if no
     // window could be created; the game then runs headless.
     bool Initialize();
@@ -30,8 +34,16 @@ namespace video
     // imageWidth x imageHeight: the image's own size when it is larger than
     // the frame (NFSMW_RESOLVE_PRESENT=2 hands over a render target's
     // image, taller than the frame): the frame is its top-left part.
+    // `between`: an in-between picture (game/hfr.h), its fraction of the world
+    // step; shown at that fraction of the guest vblank after the one before
+    // it, ahead of the real picture (0: a real picture).
+    // `shift`: a real picture to be shown that much of a vblank before its
+    // own time (game/hfr.h: a step drawn only between; below 0).
+    // `target`: when to show it (steady ns; game/hfr.h on a display whose
+    // rate isn't a whole multiple of 60 Hz: the refresh it was drawn for; 0:
+    // the usual way).
     void SubmitFrontImage(VkImage image, uint32_t width, uint32_t height, uint32_t aspectWidth = 0, uint32_t aspectHeight = 0,
-        uint32_t imageWidth = 0, uint32_t imageHeight = 0);
+        float between = 0.0f, float shift = 0.0f, int64_t target = 0, uint32_t imageWidth = 0, uint32_t imageHeight = 0);
 
     // Any thread (the renderer), before it records a write of one of its
     // front images: the index of the one of `images` (a ring, `count` of
@@ -42,6 +54,28 @@ namespace video
     // image over with SubmitFrontImage the presenter can't take it, so its
     // write, queued before that, is never read in place of another frame.
     int ClaimFrontImage(const VkImage* images, int count);
+
+    // Any thread: a display at a rate that isn't a whole multiple of 60 Hz
+    // (90, 144, 165) whose presents land on a fixed refresh grid (the refresh
+    // notice's grid check: video/refresh_notice.h), where HFR draws a picture
+    // for each refresh (game/hfr.cpp): its refresh period and a refresh's
+    // time (steady ns). False elsewhere (no grid measured, a multiple of 60
+    // Hz, a Mac). NFSMW_HFR_GRID_HZ=<hz> makes up a grid at that rate on any
+    // display (tests).
+    bool HfrGrid(double& periodNs, int64_t& gridNs);
+
+    // Any thread: pictures the display can show evenly per guest vblank (a
+    // world step) now: the refreshes a vblank is when the vblank is locked
+    // to a display at a multiple of 60 Hz and new frames are held for their
+    // refresh (2 at 120 Hz, at most 4), 2 on a Mac whose frames are shown at
+    // their vblank's time on a 120 Hz display (video/present_schedule.h), else
+    // 1 (game/hfr.h draws no in-between pictures).
+    int HfrPicturesPerStep();
+    // Settings > Display > Smooth Motion is offered (the menu shows it): a
+    // Mac's 120 Hz screen whose pictures the presenter can time
+    // (VK_GOOGLE_display_timing, as ProMotion's). Not yet elsewhere: HFR is
+    // untested on real 90-240 Hz screens there (NFSMW_HFR=1 still turns it on).
+    bool HfrOffered();
 
     // Wait until the queue is idle (resource replacement).
     void WaitGpuIdle();

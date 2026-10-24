@@ -3,6 +3,17 @@
 // Controller input (Phase 6): SDL3 gamepads and the keyboard, presented to
 // the game as XInput controller 0 through XamInputGetState.
 //
+//   - Split screen (game/split_screen.h; the rule is hid/player_slots.h):
+//     while the game is in Quick Race > Split Screen, every other controller
+//     is opened, and each one used becomes XInput user 1 (then 2, 3) with its
+//     own state and rumble; player 1 stays user 0, the keyboard and the
+//     controller that drove the menus. Outside split screen users 1-3 read
+//     not connected and only that one controller is opened, as before. Our
+//     menu's Back + Start is player 1's (IsOtherPlayersPad). A pad unplugged
+//     reads not connected (the game's own message). NFSMW_OTHER_PADS=always
+//     exposes them outside split screen too (a diagnostic);
+//     NFSMW_SPLIT_SCREEN=0, never.
+//
 //   - Sticks get a radial deadzone with rescaling (Settings > Input, or
 //     NFSMW_DEADZONE; default 0.08 of full deflection), so worn or drifting
 //     sticks rest at exactly zero while small movements still ramp up
@@ -14,6 +25,11 @@
 //     stick too, W/S = gas/brake (RT/LT), Space = A, Backspace = B,
 //     Left Shift = X, Left Ctrl = Y, Q/E = LB/RB, Enter = START, Esc = BACK,
 //     O/L/K/; = right stick, Z/C = the stick clicks. A key may drive several.
+//   - A USB steering wheel (hid/wheel.h and hid/wheel_map.h, Settings >
+//     Wheel) is used instead of a controller while one is plugged in: its
+//     own steering curve reaches the left stick, its pedals the triggers
+//     and its paddles the right stick, so the stick deadzone above is not
+//     applied to it. Its force feedback takes the rumble the game asks for.
 //   - NFSMW_INPUT_SCRIPT="12:START,15.5:A,30-90/4:DOWN,100~160:RT": taps
 //     (150 ms) at seconds since launch, taps every `step` seconds over a
 //     range, or inputs held over a range; RT/LT (triggers) and LL/LR/LU/LD
@@ -26,6 +42,9 @@
 //     "6:DOWN" for a tap), which reach the menus as a real controller's do.
 //     Both count seconds of guest time (cpu/guest_time.h): a suspension
 //     doesn't count, so what falls due during one happens after it.
+//     NFSMW_VIRTUAL_PAD_2 (_3, _4), the same syntax plus "40:DETACH" and
+//     "50:ATTACH" (unplug, plug in again): more virtual controllers, for
+//     split-screen tests.
 //   - NFSMW_INPUT_LOG=1: the left stick and triggers once a second, raw and
 //     as the game gets them.
 //   - iOS: with no controller (and no keyboard attached) a toast says the
@@ -54,6 +73,9 @@ namespace hid
     double SecondsSinceInput();
     // At exit: stop any rumble (the process may outlive nothing that would).
     void Shutdown();
+    // Main thread: the controller is another player's in split screen (XInput
+    // user 1-3), so our menu's Back + Start chord isn't its to fire.
+    bool IsOtherPlayersPad(SDL_JoystickID id);
     // Main thread, from the frame loop (not UIKit's callback), once the game
     // is suspended (iOS: the app isn't active) and once it's back: Suspend
     // stops any rumble, Resume sends the game's last request again.

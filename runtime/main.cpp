@@ -22,6 +22,7 @@
 #include "cpu/guest_time.h"
 #include <video/presenter.h>
 #include <gpu/renderer.h>
+#include <game/hfr.h>
 #include <hid/input.h>
 #include <cpu/guest_thread.h>
 #include <cpu/host_cpu.h>
@@ -499,6 +500,7 @@ int main(int argc, char** argv)
 #endif
     bool settingsLoaded = settings::Load();
     online::Start();  // online/online.h: our lobby (Host) or the search for one (Join)
+    hfr::Init();  // Smooth Motion, for this run
     // Which version ran last: a line in the log (so a bug report shows when a
     // problem began), the "What's new" note below, and this version recorded
     // as the last (user/version_check.h).

@@ -4,6 +4,81 @@ What changed in each SpeedBreaker release, newest first. Each release's notes on
 its entry here, and the game shows the entry once, the first time a new version starts (offline:
 it's built into the game).
 
+## v0.1.9
+
+### What's new
+
+- **Nine more languages** (Settings > Game > Language): French, German, Italian, Spanish, Dutch,
+  Swedish, Danish, Polish and Finnish, from the USA disc's own files. The menus and the race text
+  switch (European languages show km/h) the next time the game starts; the movies and the speech
+  stay in English, as the USA disc has them. English stays the default. Thanks to
+  wendersonrodrigues, who found where the game picks its language (pull request #26).
+- **Fill Screen renders the screen's own shape**, so it's sharper on screens taller than 16:9: a
+  Steam Deck draws 1280x800 at 1x, pixel for pixel, instead of stretching 720 rows to 800. 16:9
+  screens look exactly as before. Thanks to krittinen for the report and the screenshots
+  (issue #34).
+
+### Fixed
+
+- Mac: a wired Xbox One or Series controller can't rumble (macOS takes the rumble and the
+  controller does nothing). The game now says so once: pair it over Bluetooth for rumble.
+
+### More about it
+
+- The line under the Language row says what your installed files give the language you choose.
+  The row isn't shown on iPhone and iPad.
+- SteamOS and Linux: the log names a graphics card's PCIe link and warns when the card reaches
+  the game's memory over PCIe, to help track down slow GPUs (issue #40).
+- `NFSMW_NATIVE_SHAPE=0` keeps the old 16:9-shaped frame for a run, to compare.
+- Updating keeps your saves, settings and the installed game, and needs no disc image: on a Mac,
+  drag the new app into Applications and choose Replace, then Open Anyway once more; on SteamOS,
+  unpack the new download over the old folder.
+
+## v0.1.8
+
+### What's new
+
+- **Two-player split screen** (Quick Race > Split Screen): with two controllers, each player gets
+  their own half of the screen. The second controller joins at "Player 2 press START". If either
+  player's controller disconnects, the game pauses and says so until it's back (issue #28).
+- **Smooth Motion** (Settings > Display), on a Mac with a 120 Hz screen (ProMotion or a 120 Hz
+  monitor): up to 120 fps. The game still runs at 60 steps a second, as on the console, and draws
+  one more picture between each two. It's off by default and takes effect the next time the game
+  starts. When a scene is too heavy, it eases off, down to an even 60 for a few seconds.
+- **USB steering wheels (experimental).** A Logitech G29 steers, the pedals are the throttle and
+  the brake, the paddles shift gears, and the menus work from the wheel's buttons. Settings > Wheel
+  (shown while a wheel is plugged in) has the steering range, deadzone, response, force feedback
+  and Calibrate for other wheels. Tested with a G29 on a Mac; the steering feel is still being
+  tuned, so feedback from wheel owners is very welcome. Thanks to byteofmydream, who wrote it
+  (pull request #29).
+
+### Fixed
+
+- Now and then in a race, especially on a busy Mac, the engine (or another sound) dropped to a
+  murmur until the next gear change. The game's own sound code took a moment where it didn't get to
+  run for a console overload and cut sounds; it no longer does. Thanks to Omega3komma3 for the
+  report and the video (issue #35).
+- The fade to black before some cutscenes and loads (such as the career prologue's last race)
+  now covers the whole screen, top and bottom, on screens taller than 16:9 (a MacBook, a Steam
+  Deck), instead of leaving the scene showing above and below it.
+- A preventive memory fix for Apple-silicon Macs, iPhones and iPads: handing memory back could
+  clear a little more than it should. It wasn't seen to happen in play.
+
+### More about it
+
+- Split screen runs at 60 fps on a Mac and on a Steam Deck at its Auto resolution; at higher
+  Internal Resolutions it can drop below.
+- Smooth Motion isn't on SteamOS, Linux or iPhone and iPad yet. Internal Resolution's Auto picks
+  for two pictures a step (1x on an M1 Pro); the controls answer a few milliseconds later.
+- Wheels: other wheels than the G29 are used as best the game can work them out; Calibrate teaches
+  it yours. Force feedback works on a Mac through SDL's own Logitech driver (the G29 in its PS3
+  position, G27, G25, Driving Force GT and Pro; not a G29 in its PS4 position, a G920 or a G923).
+  On SteamOS and Linux the wheel should steer as on a Mac; force feedback there isn't tested yet.
+- The log now says when the game's sound code would have dropped sounds, at most once a minute.
+- Updating keeps your saves, settings and the installed game, and needs no disc image: on a Mac,
+  drag the new app into Applications and choose Replace, then Open Anyway once more; on SteamOS,
+  unpack the new download over the old folder.
+
 ## v0.1.7
 
 ### What's new

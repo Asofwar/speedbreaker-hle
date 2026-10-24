@@ -1,6 +1,7 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING).
 // PM4 packet semantics follow Xenia (gpu/command_processor.cc, BSD license).
 #include <stdafx.h>
+#include <game/hfr.h>
 #include "command_processor.h"
 
 #include <kernel/vmem.h>
@@ -564,20 +565,48 @@ namespace gpu
                 r.Read();  // 'SWAP'
                 r.Read();  // front buffer (physical); also in the fetch constant
                 uint32_t width = r.Read(), height = r.Read();
-                r.Skip(count - 4);
+                // An in-between picture (game/hfr.h): 'HFRB' and its fraction of the
+                // step; a step drawn only between: 'HFRR' and its own picture's.
+                float between = 0.0f, shift = 0.0f;
+                int64_t target = 0;  // the refresh it is for, on a grid that isn't a multiple of 60 Hz
+                if (count >= 6)
+                {
+                    const uint32_t marker = r.Read(), bits = r.Read();
+                    float f = 0.0f;
+                    memcpy(&f, &bits, 4);
+                    if (marker == 0x48465242)
+                        between = f;
+                    else if (marker == 0x48465252 && f > 0.0f && f < 1.0f)
+                        shift = f - 1.0f;
+                    if (count >= 8)
+                    {
+                        const uint64_t hi = r.Read(), lo = r.Read();
+                        target = int64_t((hi << 32) | lo);
+                        r.Skip(count - 8);
+                    }
+                    else
+                        r.Skip(count - 6);
+                }
+                else
+                    r.Skip(count - 4);
                 // VdSwap wrote the front buffer's fetch constant into fetch slot 0.
                 // Presented from the GPU without waiting; frame dumps (and the
-                // headless case) take the CPU path, which needs the GPU idle.
+                // headless case) take the CPU path, which needs the GPU idle
+                // (and shows no in-between pictures).
                 static const bool dumping = std::getenv("NFSMW_DUMP_FRAMES") != nullptr;
                 // A timedemo shot's swap (NFSMW_BENCH_SHOTS_SHOWN): the
                 // presenter is asked for the frame as shown before it gets it.
                 if (uint64_t shot = bench::g_shotSwap.load(std::memory_order_relaxed); shot && s_frames + 1 >= shot) [[unlikely]]
                     bench::BeforeShotSwap(s_frames + 1);
-                const bool gpuFront = !dumping && renderer::PresentFrontBuffer(&s_regs[0x4800], width, height);
+                hfr::NoteSwap(between);
+                const bool gpuFront = !dumping && renderer::PresentFrontBuffer(&s_regs[0x4800], width, height, between, shift, target);
                 if (!gpuFront)
                 {
-                    renderer::Flush();
-                    video::SubmitFrontBuffer(&s_regs[0x4800], width, height);
+                    if (between == 0.0f)
+                    {
+                        renderer::Flush();
+                        video::SubmitFrontBuffer(&s_regs[0x4800], width, height);
+                    }
                 }
                 s_counter++;
                 timeline::Mark(timeline::Swap);
@@ -601,6 +630,40 @@ namespace gpu
                 static int64_t lastSwap = guesttime::NowNs();
                 static int64_t overlayTime = guesttime::NowNs();  // the last 30-swap mark
                 static double worstMs = 0;
+                // HFR (M3): this picture's own cost, in-between and real apart.
+                if (hfr::Enabled())
+                {
+                    static uint64_t pictureCpNs = 0, pictureDraws = 0, picturePasses = 0;
+                    AccountBusy();
+                    const uint64_t passes = renderer::GetStats().passes, draws = s_draws.load();
+                    if (pictureCpNs)
+                        hfr::NotePictureCost(between != 0.0f, double(renderer::g_cpBusyNs - pictureCpNs) / 1e6, draws - pictureDraws,
+                            passes - picturePasses);
+                    pictureCpNs = renderer::g_cpBusyNs;
+                    pictureDraws = draws;
+                    picturePasses = passes;
+                }
+                // HFR's load check (game/hfr.cpp): the command processor's
+                // and the GPU's time since the last real picture's swap.
+                {
+                    static uint64_t lastCpNs = 0, lastGpuUs = 0;
+                    static bool hadBetween = false;
+                    if (between != 0.0f)
+                        hadBetween = true;
+                    else
+                    {
+                        AccountBusy();
+                        const auto st = renderer::GetStats();
+                        const uint64_t gpuUs = st.gpuExecUs;  // execution only (0 without timestamps: the CP's time alone)
+                        if (lastCpNs)
+                            hfr::NoteFrameCost(double(renderer::g_cpBusyNs - lastCpNs) / 1e6, double(gpuUs - lastGpuUs) / 1e3, hadBetween);
+                        lastCpNs = renderer::g_cpBusyNs;
+                        lastGpuUs = gpuUs;
+                        hadBetween = false;
+                    }
+                }
+                // Game frames: an in-between picture's swap isn't one (its frame is the real picture's).
+                if (between == 0.0f)
                 {
                     AccountBusy();
                     int64_t swapNow = guesttime::NowNs();
@@ -685,8 +748,8 @@ namespace gpu
                             double(guard.snapFull - lastGuard.snapFull) / 120, double(guard.snapWhole - lastGuard.snapWhole) / 120,
                             double(guard.snapReading - lastGuard.snapReading) / 120, double(guard.snapWaits - lastGuard.snapWaits) / 120,
                             double(guard.snapGaveUp - lastGuard.snapGaveUp) / 120);
-                    fprintf(stderr, "[perf] %.1f fps (worst frame %.1f ms) | CP busy %.1f ms/frame (%.2f us/draw) | per frame: %.0f draws (%.0f skipped as later tiles, %.0f constant uploads), %.1f passes, %.1f resolves, %.1f submits, %.1f uploads, GPU busy %.1f ms (executing %.1f ms%s) | guard: %.1f faults (%.1f opened), %.2f stalls, %.2f ms stalled%s | %.0f KB snapshots (%.0f cached, %.0f uncacheable) | shadow: %.0f KB up, %.0f KB back, %.2f waits"
-                        " | scaled: %.1f loads, %.0f MB untiled, %.0f MB resolved, %.2f allocations, %.2f evictions, %.2f fallbacks | post-processing GPU %.2f ms (AA %.2f ms)"
+                    fprintf(stderr, "[perf] %.1f fps (worst frame %.1f ms) | CP busy %.1f ms/frame (%.2f us/draw) | per frame: %.0f draws (%.0f skipped as later tiles, %.0f constant uploads), %.1f passes, %.1f resolves, %.1f submits, %.1f uploads, GPU busy %.1f ms (executing %.1f ms%s) | guard: %.1f faults (%.1f opened), %.2f stalls, %.2f ms stalled%s | %.0f KB snapshots | shadow: %.0f KB up, %.0f KB back, %.2f waits"
+                        " | scaled: %.1f loads, %.0f MB untiled, %.0f MB resolved, %.2f allocations, %.2f evictions, %.2f fallbacks, %.1f stored into textures | post-processing GPU %.2f ms (AA %.2f ms)"
                         " | display: %llu dropped, %llu repeated | world: %llu frames, %llu without a step, %llu with 2+ | late %llu"
                         " | memory: %.0f MB (targets %.0f in %u, textures %.0f in %u, scaled %.0f, front %.0f), device %.0f of %.0f MB,"
                         " image blocks %u (%.0f MB: %.0f MB in %u images), %u spare (%.0f MB), %u images alone (%.0f MB)"
@@ -707,7 +770,7 @@ namespace gpu
                         double(scaled.untiledBytes - lastScaled.untiledBytes) / 1048576.0 / 120,
                         double(scaled.resolvedBytes - lastScaled.resolvedBytes) / 1048576.0 / 120,
                         double(scaled.allocations - lastScaled.allocations) / 120, double(scaled.evictions - lastScaled.evictions) / 120,
-                        double(scaled.fallbacks - lastScaled.fallbacks) / 120, double(post.totalNs - lastPost.totalNs) / 1e6 / postFrames,
+                        double(scaled.fallbacks - lastScaled.fallbacks) / 120, double(scaled.hosted - lastScaled.hosted) / 120, double(post.totalNs - lastPost.totalNs) / 1e6 / postFrames,
                         double(post.aaNs - lastPost.aaNs) / 1e6 / postFrames,
                         (unsigned long long)(shown.dropped - lastShown.dropped), (unsigned long long)(shown.repeated - lastShown.repeated),
                         (unsigned long long)(world.frames - lastWorld.frames), (unsigned long long)(world.noStep - lastWorld.noStep),

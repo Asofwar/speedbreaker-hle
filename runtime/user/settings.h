@@ -43,6 +43,7 @@ namespace settings
         Fullscreen,
         VSync,
         FrameRate,
+        SmoothMotion,  // HFR (game/hfr.h): shown where the display can show it (video::HfrOffered)
         PresentScale,  // shown on iOS only
         AntiAliasing,
         Scaling,
@@ -63,6 +64,44 @@ namespace settings
         StickDeadzone,
         TriggerDeadzone,
         Vibration,
+        // Wheel (the [wheel] table): a USB steering wheel as the pad
+        // (hid/wheel_map.h). The page shows itself only while one is
+        // connected; the four axis options are hidden, and hold what
+        // Settings > Wheel > Calibrate assigned (-1: work it out from the
+        // device).
+        Wheel,
+        SteeringRange,
+        InvertSteering,
+        SteeringDeadzone,
+        SteeringResponse,
+        ForceFeedback,
+        CenteringForce,
+        WheelSteerAxis,     // hidden
+        WheelThrottleAxis,  // hidden
+        WheelBrakeAxis,     // hidden
+        WheelClutchAxis,    // hidden
+        // Each pedal's two ends, as Calibrate measured them: where it rests
+        // and where it reads fully pressed (hidden; equal values: not
+        // measured, and the wheel's model or its axis is used instead).
+        ThrottleRest, ThrottleFull,
+        BrakeRest, BrakeFull,
+        ClutchRest, ClutchFull,
+        // The wheel's own two ends, as Calibrate measured them at full lock
+        // each way (hidden; equal values: not measured). Between them they
+        // give the centre, how far it turns each way, and which way round
+        // it is.
+        SteerLeft, SteerRight,
+        // The joystick button Calibrate gave each pad control, in
+        // hid/wheel_map.h's Control order (hidden; -1: none of the
+        // player's doing, so the wheel's model decides).
+        ButtonA, ButtonB, ButtonX, ButtonY,
+        ButtonLB, ButtonRB, ButtonBack, ButtonStart,
+        ButtonLS, ButtonRS, ButtonShiftUp, ButtonShiftDown,
+        // Which steering this file's Wheel settings were made with (hidden):
+        // 0, builds before the game's own deadzone was stepped over (a file
+        // from them, or none yet); 1 since. hid/wheel.cpp brings a Steering
+        // Response set against that deadzone back to 1.00 once.
+        WheelSettingsVersion,
         // Controls (the [keys] table): the two keyboard keys that drive
         // each Xbox 360 control, as key codes (user/key_names.h); the
         // second of a pair is always the first's id + 1 (hid/key_map.h
@@ -98,7 +137,7 @@ namespace settings
         AsyncShaders,
         PerformanceOverlay,
         // Game (the [game] table)
-        GameLanguage,  // game/language.cpp: the disc's language (a PAL disc's data)
+        GameLanguage,  // game/language.cpp: the game's language, game::language's ids (English = 0)
         Count
     };
     constexpr size_t kCount = size_t(Id::Count);
@@ -106,7 +145,7 @@ namespace settings
     // Key: a key code of user/key_names.h (0: no key), saved by its name
     // there ("w", "left_shift", "none"); the menu takes it from a key press.
     enum class Type : uint8_t { Bool, Int, Float, Enum, Key };
-    enum class Category : uint8_t { Display, Graphics, Audio, Input, Controls, Online, Advanced, Count };
+    enum class Category : uint8_t { Display, Graphics, Audio, Input, Wheel, Controls, Online, Game, Advanced, Count };
     enum class Apply : uint8_t { Live, Restart };
 
     // Values of the enum options (GetInt returns them).
@@ -134,16 +173,6 @@ namespace settings
     // Anisotropy: 1 (off), 2, 4, 8, 16, or one of these.
     constexpr int32_t kAnisotropyAuto = 0;   // 16x on a discrete GPU or an M-series iPad, 4x on other integrated ones
     constexpr int32_t kAnisotropyGame = -1;  // each texture's own setting, as on the 360
-
-    // Game Language: the game's own language index (its LANGUAGES\ table),
-    // which the Xbox 360 executable fixes per SKU at boot: the USA disc's is
-    // English (0), Spain's is Spanish (4). Anything but English also takes
-    // the PAL movies (_pal.wmv). See game/language.cpp.
-    enum class GameLanguage : int32_t
-    {
-        English = 0, French = 1, German = 2, Italian = 3, Spanish = 4,
-        Dutch = 5, Swedish = 6, Danish = 7, Polish = 12, Finnish = 13,
-    };
 
     struct EnumEntry
     {
@@ -322,4 +351,11 @@ namespace settings
     // the [app] table is rewritten); any thread.
     bool RefreshNoticeShown(int hz);
     bool RecordRefreshNotice(int hz);
+
+    // The "no rumble over USB" note for an Xbox controller on a Mac
+    // (hid/rumble_note.h) was closed: [app] xbox_usb_rumble_note in
+    // settings.toml. Record sets it, in memory and in the file, as
+    // RecordRefreshNotice does; any thread.
+    bool RumbleNoteShown();
+    bool RecordRumbleNote();
 }

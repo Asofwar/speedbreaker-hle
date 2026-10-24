@@ -121,6 +121,9 @@ namespace
             { "90 Hz, dismissed before", with(Ready(90, Platform::GameMode), [](auto& i) { i.shownBefore = true; }), Verdict::Never },
             { "90 Hz, NFSMW_REFRESH_NOTICE=0", with(Ready(90, Platform::GameMode), [](auto& i) { i.forced = 0; }), Verdict::Never },
             { "90 Hz, dismissed, NFSMW_REFRESH_NOTICE=1", with(Ready(90, Platform::GameMode), [](auto& i) { i.shownBefore = true; i.forced = 1; }), Verdict::Show },
+            // HFR (NFSMW_HFR=1) draws a picture for each refresh of the grid.
+            { "90 Hz, HFR draws a picture each refresh", with(Ready(90, Platform::GameMode), [](auto& i) { i.hfrHandles = true; }), Verdict::Never },
+            { "144 Hz, HFR, NFSMW_REFRESH_NOTICE=1", with(Ready(144, Platform::Desktop), [](auto& i) { i.hfrHandles = true; i.forced = 1; }), Verdict::Show },
             // The moment.
             { "the mode just changed", with(Ready(144, Platform::Desktop), [](auto& i) { i.modeStableSec = 1; }), Verdict::Wait },
             { "the grid just fitted", with(Ready(144, Platform::Desktop), [](auto& i) { i.gridStableSec = 2; }), Verdict::Wait },

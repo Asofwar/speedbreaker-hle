@@ -30,6 +30,8 @@ endfunction()
 sb_test(block_ranges_test)
 # Where guest memory and the upload ring go (gpu/memory_plan.h, header only).
 sb_test(memory_plan_test)
+# A discrete GPU's PCIe link for the logs (gpu/pcie_link.h, header only; issue #40).
+sb_test(pcie_link_test)
 sb_test(zpd_report_test)
 # The resolve shader's 24-bit depth pack (gpu/depth24_glsl.h), header only;
 # renderer.cpp is read to check its resolve shader uses it.
@@ -42,6 +44,14 @@ sb_test(depth_only_test ARGS ${RT}/gpu/renderer.cpp)
 # and the scaled resolve memory's layout (gpu/render_scale.h, header only);
 # renderer.cpp is read to check its scaled-memory shaders use it.
 sb_test(render_scale_test ARGS ${RT}/gpu/renderer.cpp)
+# Split screen's two views in one untiled target (gpu/split_views.h, header
+# only): each cut to its own rows at 1x, 1.5x, 2x, 3x and Vert+'s taller y
+# scales, meeting exactly; renderer.cpp is read to check it applies the rules.
+sb_test(split_views_test ARGS ${RT}/gpu/renderer.cpp)
+# Which controller is which player in split screen (hid/player_slots.h,
+# header only) and the game's split-screen test (game/split_screen.h);
+# input.cpp is read to check users 1-3 follow it.
+sb_test(player_slots_test ARGS ${RT}/hid/input.cpp)
 # The police vid-cam's side bars, the intro's black frames, the results
 # screen's backdrop and what fills the screen round them (gpu/edge_bars.h,
 # header only).
@@ -104,6 +114,15 @@ sb_test(gpu_device_lost_test ARGS ${RT}/gpu/renderer.cpp ${RT}/video/presenter.c
 # waits end (the vblank handler, the game's ring kicks, a completion, a
 # guest thread asking for a submit).
 sb_test(gpu_cp_doorbell_test ARGS ${RT}/gpu/command_processor.cpp ${RT}/gpu/renderer.cpp ${RT}/kernel/write_watch.cpp)
+# The fade to black before a load short of the screen's edges (the career
+# prologue's last race, v0.1.7 on a MacBook): stretched to them at every
+# screen shape (gpu/edge_bars.h's PlanLayer); renderer.cpp is read to check
+# it asks for and applies it on both paths.
+sb_test(fade_layers_test ARGS ${RT}/gpu/renderer.cpp)
+# NFSMW_LOG_COVERS (gpu/covers.h, header only): front-end quads and presented
+# pictures that leave a dark box, or a full-screen layer, short of the
+# picture's edges.
+sb_test(covers_test)
 # A saved pipeline cache from another GPU, driver or OS version, and the log
 # line that says so (gpu/pipeline_cache_header.h, header only).
 sb_test(pipeline_cache_header_test)
@@ -114,6 +133,10 @@ sb_test(pipeline_cache_header_test)
 # every pipeline it draws with and prewarms only what its Draw would make.
 sb_test(pipeline_keys_test ARGS ${RT}/gpu/renderer.cpp)
 sb_test(picture_fit_test SOURCES ${RT}/video/picture_fit.cpp)
+# GitHub #34's native rows and columns (video::NativeShape, AutoNativeScale):
+# a Steam Deck's 1280x800 at 1x renders 1280x800, 16:9 pictures keep their
+# scale exactly, Auto takes the native shape within its budget.
+sb_test(native_rows_test SOURCES ${RT}/video/picture_fit.cpp)
 # Which Vulkan device the presenter draws with, and its log line
 # (video/gpu_choice.h, header only).
 sb_test(gpu_choice_test)
@@ -167,6 +190,12 @@ sb_test(refresh_fit_test SOURCES ${RT}/video/refresh_fit.cpp)
 # user/settings.cpp).
 sb_test(refresh_notice_test SOURCES ${RT}/video/refresh_fit.cpp ${RT}/user/settings.cpp
     ARGS ${CMAKE_CURRENT_BINARY_DIR}/refresh_notice_scratch)
+# The one-time note that an Xbox controller by USB on a Mac takes no rumble
+# (hid/rumble_note.h): a wired Xbox pad on a Mac gets it once, a DualSense
+# wired, an Xbox pad over Bluetooth and other platforms never; the dismissal
+# in settings.toml, in a scratch folder (user/settings.cpp).
+sb_test(rumble_note_test SOURCES ${RT}/user/settings.cpp
+    ARGS ${CMAKE_CURRENT_BINARY_DIR}/rumble_note_scratch)
 # How late the guest vblank's thread wakes on this machine, alone and with
 # every core busy (video/vblank_timer.cpp; checked on macOS, where its
 # scheduling changed in v0.1.4). Its thresholds (1.5 ms in 99% of vblanks,
@@ -180,6 +209,11 @@ sb_test(present_schedule_test)
 # doesn't stop the game's sound (GitHub issue #20: the sound stopped for good,
 # then the game hung after the race), and a working one is followed as before.
 sb_test(audio_cadence_test)
+# EA SND's mixer never drops sounds for time on a host (apu/ea_cpu_budget.h,
+# header only; GitHub issue #35: one sound, usually the engine, much quieter
+# until the next gear change): EA's budget rule as a model, the policy, and
+# the generated code (ppc/) read to check the functions and offsets it names.
+sb_test(ea_cpu_budget_test ARGS ${ROOT}/ppc)
 # The present waiter uses a swapchain only while it is the current one, and
 # none is destroyed under such a use (video/swapchain_use.h, header only):
 # fake swapchains destroyed and made again under a waiting thread; presenter.cpp
@@ -221,6 +255,10 @@ sb_test(bench_shots_test)
 # The nitrous light trails' ring at the 360's 30 fps length (game/light_trails.h,
 # header only; GitHub issue #10).
 sb_test(light_trails_test)
+# SPIKE (v017-hfr-spike): the in-between picture's pose blending (game/hfr_blend.h, header only).
+sb_test(hfr_blend_test)
+sb_test(hfr_schedule_test)
+sb_test(hfr_grid_test)
 # The guest clock across suspensions, on real sleeps: its thresholds hold on a
 # quiet machine, not under a parallel ctest or on a shared CI runner (timing).
 sb_test(guest_time_test SOURCES ${RT}/cpu/guest_time.cpp LABELS timing)
@@ -340,8 +378,18 @@ set_target_properties(key_names_test PROPERTIES SKIP_BUILD_RPATH OFF)
 # vendors; no SDL).
 sb_test(settings_keys_test SOURCES ${RT}/user/settings.cpp)
 target_include_directories(settings_keys_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
+# Settings > Game > Language (game/language.h, header only, and the option in
+# user/settings.cpp): English untouched for every caller, the game's ten
+# languages, the movie suffix by the files present, what the files give.
+sb_test(language_test SOURCES ${RT}/user/settings.cpp)
+target_include_directories(language_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
 # The keyboard's controls and how held keys become a pad (hid/key_map.h), header only.
 sb_test(key_map_test)
+# A USB steering wheel as the pad (hid/wheel_map.h, header only): which
+# joystick is a wheel, which of its axes is the wheel and which are its
+# pedals, the steering curve, the pedals' travel, the buttons and paddles,
+# NFSMW_WHEEL_BUTTONS, and the force-feedback levels.
+sb_test(wheel_map_test)
 # Check for Updates' logic: versions, GitHub's JSON, curl's output and the
 # release notes (update/check.cpp, self-contained).
 sb_test(update_check_test SOURCES ${RT}/update/check.cpp)
@@ -388,8 +436,15 @@ if(EXISTS ${ROOT}/ppc/ppc_config.h AND EXISTS ${ROOT}/tools/XenonRecomp/XenonUti
     sb_test(kernel_dispatcher_test SOURCES ${RT}/kernel/dispatcher.cpp ${RT}/kernel/xdm.cpp ${RT}/cpu/guest_time.cpp)
     target_include_directories(kernel_dispatcher_test PRIVATE ${RT}/kernel ${RT}/thirdparty/o1heap ${ROOT}/ppc
         ${ROOT}/tools/XenonRecomp/XenonUtils ${ROOT}/tools/XenonRecomp/thirdparty/simde)
+    # Released and decommitted guest pages back to zero on hosts with larger pages
+    # (16 KB on Apple): only whole host pages remapped, so a 4 KB-page heap's
+    # neighbouring allocation in the same host page survives (kernel/vmem.cpp; the
+    # host page size injected, so 16 and 64 KB are checked on any host).
+    sb_test(vmem_host_pages_test SOURCES ${RT}/kernel/vmem.cpp)
+    target_include_directories(vmem_host_pages_test PRIVATE ${RT}/kernel ${RT}/thirdparty/o1heap ${ROOT}/ppc
+        ${ROOT}/tools/XenonRecomp/XenonUtils ${ROOT}/tools/XenonRecomp/thirdparty/simde)
 else()
-    message(STATUS "write_watch_test and kernel_dispatcher_test left out: they need ppc/ (scripts/recompile.sh) and tools/XenonRecomp (scripts/setup_tools.sh)")
+    message(STATUS "write_watch_test, kernel_dispatcher_test and vmem_host_pages_test left out: they need ppc/ (scripts/recompile.sh) and tools/XenonRecomp (scripts/setup_tools.sh)")
 endif()
 # The guest vblank lock's closed-loop simulation (a tool more than a test).
 add_executable(vblank_lock_sim ${CMAKE_CURRENT_SOURCE_DIR}/vblank_lock_sim.cpp ${RT}/video/refresh_fit.cpp ${RT}/video/vblank_lock.cpp)

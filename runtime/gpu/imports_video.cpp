@@ -7,6 +7,7 @@
 #include <stdafx.h>
 #include <kernel/function.h>
 #include <kernel/vmem.h>
+#include <game/hfr.h>
 #include <report/report.h>
 #include "command_processor.h"
 
@@ -133,11 +134,34 @@ void VdSwap(be<uint32_t>* buffer, be<uint32_t>* fetch, void* unk2, void* unk3, v
     buffer[o++] = (0u << 30) | ((6 - 1) << 16) | 0x4800;  // type 0: SHADER_CONSTANT_FETCH_00_0, 6 regs
     for (int i = 0; i < 6; i++)
         buffer[o++] = words[i];
-    buffer[o++] = (3u << 30) | ((4 - 1) << 16) | (0x64 << 8);  // type 3: XE_SWAP, 4 dwords
+    // An in-between picture (game/hfr.h) carries 'HFRB' and its fraction of
+    // the step: the presenter shows it at its share of the vblank before the
+    // real picture.
+    // A step drawn only between (hfr::OwnFraction) carries 'HFRR' and its own
+    // picture's fraction: shown that much of a vblank before a real one.
+    const bool between = hfr::InBetween();
+    const float own = between ? 0.0f : hfr::OwnFraction();
+    // On a grid that isn't a multiple of 60 Hz, also the refresh it is for.
+    const int64_t target = hfr::PictureTarget();
+    const uint32_t count = target ? 8 : between || own > 0.0f ? 6 : 4;
+    buffer[o++] = (3u << 30) | ((count - 1) << 16) | (0x64 << 8);  // type 3: XE_SWAP
     buffer[o++] = 0x53574150;  // 'SWAP'
     buffer[o++] = frontPhysical;
     buffer[o++] = *width;
     buffer[o++] = *height;
+    if (between || own > 0.0f || target)
+    {
+        const float t = between ? hfr::InBetweenFraction() : own > 0.0f ? own : 1.0f;
+        uint32_t bits;
+        memcpy(&bits, &t, 4);
+        buffer[o++] = between ? 0x48465242 : 0x48465252;  // 'HFRB', 'HFRR'
+        buffer[o++] = bits;
+        if (target)
+        {
+            buffer[o++] = uint32_t(uint64_t(target) >> 32);
+            buffer[o++] = uint32_t(uint64_t(target));
+        }
+    }
     while (o < 64)
         buffer[o++] = 2u << 30;  // type-2 filler
 }

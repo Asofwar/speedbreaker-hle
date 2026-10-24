@@ -4,6 +4,9 @@
 #include "cursor_idle.h"
 
 #include <game/timedemo.h>
+#include <hid/input.h>
+#include <hid/wheel.h>       // the settings chord and the menus from a steering wheel
+#include <hid/wheel_map.h>   // ...which buttons those are
 #include <kernel/xam.h>
 #include <report/report.h>
 #include <user/settings.h>
@@ -13,8 +16,10 @@
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
+// FeedWheelNav: the input events the backend has queued this frame; on iOS also DragToScroll (the window under a
+// touch, its scroll and the active item).
+#include <imgui_internal.h>
 #if defined(__APPLE__) && TARGET_OS_IOS
-#include <imgui_internal.h>  // DragToScroll: the window under a touch, its scroll and the active item
 #include <platform/ios_ui.h>
 #endif
 #if defined(__APPLE__) && !TARGET_OS_IOS
@@ -123,6 +128,103 @@ namespace ui
             bool back = false, start = false, fired = false;
         };
         std::unordered_map<SDL_JoystickID, Chord> s_chords;
+
+        // One of `which`'s two chord buttons went down or up. True when
+        // that opened or closed the menu, so the event is spent. A steering
+        // wheel comes through here too (it is a joystick, not a gamepad:
+        // hid/wheel.h), on the same state as a controller's.
+        bool ChordButton(SDL_JoystickID which, bool back, bool down)
+        {
+            Chord& chord = s_chords[which];
+            if (back)
+                chord.back = down;
+            else
+                chord.start = down;
+            if (!chord.back && !chord.start)
+                chord.fired = false;
+            if (s_modal)
+                return false;
+            if (chord.back && chord.start && !chord.fired)
+            {
+                chord.fired = true;
+                s_settingsOpen ? CloseSettings() : OpenSettings();
+                return true;
+            }
+            // In the menu, Start or Back alone closes it (and counts as the
+            // chord, so the other button of a Back + Start press can't reopen it).
+            if (down && s_settingsOpen && !chord.fired)
+            {
+                chord.fired = true;
+                CloseSettings();
+                return true;
+            }
+            return false;
+        }
+
+        // A steering wheel's buttons as the menus' navigation. ImGui takes
+        // gamepad keys only while its backend says a gamepad is there
+        // (ImGuiBackendFlags_HasGamepad), and the SDL3 backend clears that
+        // every frame it has no SDL gamepad open, which a wheel never is:
+        // with a wheel alone ImGui dropped every key it was fed (its NewFrame
+        // zeroes the gamepad keys without the flag). So while a wheel is
+        // plugged in the flag is set here, after the backend's frame, and
+        // each key is the wheel's OR the controller's (the backend's first
+        // gamepad, read from SDL as it reads it), every frame.
+        //
+        // The backend has already queued the controller's change for this
+        // frame, if there is one: that event is amended rather than followed
+        // by a second one for the same key, which ImGui's input trickling
+        // holds over to the next frame (a held wheel button beside an idle
+        // controller flickered, and presses were lost). Without a wheel this
+        // does nothing: the backend's behaviour is v0.1.7's.
+        void FeedWheelNav()
+        {
+            if (!hid::wheel::Found())
+                return;
+            using namespace hid::wheelmap::button;
+            struct Key { uint16_t bit; ImGuiKey key; SDL_GamepadButton pad; };
+            static const Key keys[] = {
+                { DpadUp, ImGuiKey_GamepadDpadUp, SDL_GAMEPAD_BUTTON_DPAD_UP },
+                { DpadDown, ImGuiKey_GamepadDpadDown, SDL_GAMEPAD_BUTTON_DPAD_DOWN },
+                { DpadLeft, ImGuiKey_GamepadDpadLeft, SDL_GAMEPAD_BUTTON_DPAD_LEFT },
+                { DpadRight, ImGuiKey_GamepadDpadRight, SDL_GAMEPAD_BUTTON_DPAD_RIGHT },
+                { A, ImGuiKey_GamepadFaceDown, SDL_GAMEPAD_BUTTON_SOUTH },
+                { B, ImGuiKey_GamepadFaceRight, SDL_GAMEPAD_BUTTON_EAST },
+                { X, ImGuiKey_GamepadFaceLeft, SDL_GAMEPAD_BUTTON_WEST },
+                { Y, ImGuiKey_GamepadFaceUp, SDL_GAMEPAD_BUTTON_NORTH },
+                { LeftShoulder, ImGuiKey_GamepadL1, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER },
+                { RightShoulder, ImGuiKey_GamepadR1, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER },
+                { Start, ImGuiKey_GamepadStart, SDL_GAMEPAD_BUTTON_START },
+                { Back, ImGuiKey_GamepadBack, SDL_GAMEPAD_BUTTON_BACK },
+            };
+            ImGuiIO& io = ImGui::GetIO();
+            io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            const uint16_t held = hid::wheel::HeldButtons();
+            SDL_Gamepad* pad = nullptr;
+            int count = 0;
+            if (SDL_JoystickID* ids = SDL_GetGamepads(&count))
+            {
+                if (count > 0)
+                    pad = SDL_GetGamepadFromID(ids[0]);  // the one the backend opened (its AutoFirst), or none
+                SDL_free(ids);
+            }
+            ImVector<ImGuiInputEvent>& queue = ImGui::GetCurrentContext()->InputEventsQueue;
+            for (const Key& k : keys)
+            {
+                const bool down = (held & k.bit) != 0 || (pad && SDL_GetGamepadButton(pad, k.pad));
+                ImGuiInputEvent* queued = nullptr;
+                for (ImGuiInputEvent& e : queue)
+                    if (e.Type == ImGuiInputEventType_Key && e.Key.Key == k.key)
+                        queued = &e;
+                if (queued)
+                {
+                    queued->Key.Down = down;
+                    queued->Key.AnalogValue = down ? 1.0f : 0.0f;
+                }
+                else
+                    io.AddKeyEvent(k.key, down);  // ImGui ignores it when the key is already so
+            }
+        }
 
         // A three-finger tap on a touchscreen (an iPhone's or iPad's, the
         // Steam Deck's) opens and closes the settings menu, as F1 does: the
@@ -689,38 +791,38 @@ namespace ui
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         case SDL_EVENT_GAMEPAD_BUTTON_UP:
         {
-            bool down = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
-            Chord& chord = s_chords[e.gbutton.which];
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK)
-                chord.back = down;
-            else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START)
-                chord.start = down;
-            else
+            // Split screen: another player's Back + Start is the game's (our
+            // menu is player 1's, and blocks both while open).
+            if (hid::IsOtherPlayersPad(e.gbutton.which))
                 break;
-            if (!chord.back && !chord.start)
-                chord.fired = false;
-            if (s_modal)
+            if (e.gbutton.button != SDL_GAMEPAD_BUTTON_BACK && e.gbutton.button != SDL_GAMEPAD_BUTTON_START)
                 break;
-            if (chord.back && chord.start && !chord.fired)
-            {
-                chord.fired = true;
-                s_settingsOpen ? CloseSettings() : OpenSettings();
+            if (ChordButton(e.gbutton.which, e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK,
+                    e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN))
                 return;
-            }
-            // In the menu, Start or Back alone closes it (and counts as the
-            // chord, so the other button of a Back + Start press can't reopen it).
-            if (down && s_settingsOpen && !chord.fired)
-            {
-                chord.fired = true;
-                CloseSettings();
+            break;
+        }
+        case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+        case SDL_EVENT_JOYSTICK_BUTTON_UP:
+        {
+            // A steering wheel's own Back and Start (hid/wheel.h). Every
+            // other joystick's buttons, and a gamepad's (which arrive as
+            // gamepad events as well), get nothing from ButtonFor.
+            const uint16_t bit = hid::wheel::ButtonFor(e.jbutton.which, e.jbutton.button);
+            if (bit != hid::wheelmap::button::Back && bit != hid::wheelmap::button::Start)
+                break;
+            if (ChordButton(e.jbutton.which, bit == hid::wheelmap::button::Back,
+                    e.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN))
                 return;
-            }
             break;
         }
         case SDL_EVENT_GAMEPAD_ADDED:
         case SDL_EVENT_GAMEPAD_REMOVED:
             s_chords.erase(e.gdevice.which);
             forward = true;  // the backend re-opens its controllers
+            break;
+        case SDL_EVENT_JOYSTICK_REMOVED:
+            s_chords.erase(e.jdevice.which);
             break;
         case SDL_EVENT_FINGER_DOWN:
         case SDL_EVENT_FINGER_MOTION:
@@ -986,6 +1088,7 @@ namespace ui
             return false;
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        FeedWheelNav();  // after the backend's gamepads: a wheel's keys merged with the controller's
         // SDL gave the window's size and pixels; the UI is drawn into the
         // swapchain, which can be smaller (iOS's present scale) and, for a
         // moment, another shape (a view SDL turned portrait while it is
@@ -1112,6 +1215,10 @@ namespace ui
         if (!s_settingsOpen)
             return;
         s_settingsOpen = false;
+        // A wheel calibration under way ends with the menu (what it kept stays):
+        // while it runs the wheel's buttons are its own, chord included.
+        if (hid::wheel::Calibrating())
+            hid::wheel::StopCalibrate();
         UpdateCapture();
         ForgetUpdateDialog();
         ForgetQuitPrompt();

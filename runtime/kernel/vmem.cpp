@@ -5,15 +5,45 @@
 #include <compat/win/win_mem.h>
 #endif
 
+#include <unistd.h>
+
 namespace vmem
 {
+    bool RemapAnon(void* host, size_t bytes)
+    {
+#ifdef _WIN32
+        return winmem::ResetPages(host, bytes);  // decommitted and committed again: zeros
+#else
+        return mmap(host, bytes, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) != MAP_FAILED;
+#endif
+    }
+
+    void ResetHostRange(void* host, size_t bytes, size_t hostPage, RemapFn remap)
+    {
+        uint8_t* begin = static_cast<uint8_t*>(host);
+        uintptr_t lo = (uintptr_t(begin) + hostPage - 1) & ~uintptr_t(hostPage - 1);
+        uintptr_t hi = (uintptr_t(begin) + bytes) & ~uintptr_t(hostPage - 1);
+        if (lo >= hi)
+        {
+            memset(begin, 0, bytes);  // no whole host page inside
+            return;
+        }
+        uint8_t* wholeBegin = begin + (lo - uintptr_t(begin));
+        uint8_t* wholeEnd = begin + (hi - uintptr_t(begin));
+        memset(begin, 0, wholeBegin - begin);
+        if (!remap(wholeBegin, wholeEnd - wholeBegin))
+            memset(wholeBegin, 0, wholeEnd - wholeBegin);
+        memset(wholeEnd, 0, begin + bytes - wholeEnd);
+    }
+
     PageHeap::PageHeap(uint32_t base, uint32_t size, uint32_t pageSize)
-        : m_base(base), m_size(size), m_pageSize(pageSize), m_pages(size / pageSize)
+        : m_base(base), m_size(size), m_pageSize(pageSize), m_hostPage(size_t(sysconf(_SC_PAGESIZE))),
+          m_pages(size / pageSize)
     {
     }
 
-    // Returns pages to fresh zero-filled memory. Remapping is lazy and cheap
-    // even for hundreds of megabytes, unlike memset.
+    // Returns pages to fresh zero-filled memory (ResetHostRange: the whole
+    // host pages inside remapped, any partial ones at the ends cleared).
     void PageHeap::ResetHostPages(uint32_t firstPage, uint32_t count)
     {
         void* host = g_memory.Translate(m_base + firstPage * m_pageSize);
@@ -24,9 +54,10 @@ namespace vmem
         if (m_base >= 0xA0000000 || !winmem::ResetPages(host, bytes))
             memset(host, 0, bytes);
 #else
-        if (m_base >= 0xA0000000 ||
-            mmap(host, bytes, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) == MAP_FAILED)
+        if (m_base >= 0xA0000000)
             memset(host, 0, bytes);
+        else
+            ResetHostRange(host, bytes, m_hostPage, m_remap);
 #endif
     }
 

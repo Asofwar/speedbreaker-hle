@@ -82,7 +82,7 @@ namespace video
         m_hold = on;
     }
 
-    int64_t VblankLock::PresentAt(int64_t vblank) const
+    int64_t VblankLock::PresentAt(int64_t vblank, float between) const
     {
         std::lock_guard lock(m_mutex);
         if (!m_locked || m_display.multiple < 2 || !m_hold || !vblank)
@@ -94,7 +94,7 @@ namespace video
         // more than half a refresh late.
         const double period = m_display.periodNs;
         const double k = std::floor(double(vblank - m_display.gridNs) / period);
-        const double target = double(m_display.gridNs) + (k + m_display.multiple + m_extra) * period;
+        const double target = double(m_display.gridNs) + (k + m_display.multiple + m_extra + std::round(double(between) * m_display.multiple)) * period;
         return int64_t(std::llround(target - period + double(kHoldAfterRefreshNs)));
     }
 
@@ -228,6 +228,12 @@ namespace video
             m_earlyRun = m_earlyLate = 0;
             std::fill(m_missed, m_missed + kHistory, false);
         }
+    }
+
+    int VblankLock::HoldMultiple() const
+    {
+        std::lock_guard lock(m_mutex);
+        return m_locked && m_hold && m_display.multiple >= 2 ? m_display.multiple : 1;
     }
 
     bool VblankLock::Locked() const

@@ -43,6 +43,17 @@ namespace gpu
         // strides and offsets and whether they all index with the vertex
         // index (only a vertex shader's can, see gpu/vertex_snapshot.h).
         std::vector<vsnap::FetchUse> vertexFetches;
+        // Per vertex fetch constant (0..95), for a vertex shader: the largest
+        // dword stride its vfetches use, and the furthest dword past a
+        // vertex's start they read (offset + 4); vertexIndexOther marks the
+        // constants some vfetch of which doesn't index by the vertex index as
+        // it comes in (r0.x, before anything writes r0), a negative offset, or
+        // a pixel shader's. The others read only the draw's vertices' records:
+        // the renderer copies or guards just those (HFR M3: the dynamic
+        // buffers' other slots stay writable).
+        uint8_t vertexStride[96] = {};
+        uint8_t vertexExtent[96] = {};
+        uint32_t vertexIndexOther[3] = {};
         uint32_t texture2DMask = 0;      // texture fetch slots used, by dimension
         uint32_t texture3DMask = 0;
         uint32_t textureCubeMask = 0;

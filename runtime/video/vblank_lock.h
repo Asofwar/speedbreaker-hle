@@ -116,6 +116,9 @@ namespace video
         void Observe(int64_t vblank, int64_t presented, int64_t onScreen, int64_t ready = 0);
         Status GetStatus() const;
         bool Locked() const;
+        // Refreshes a vblank is while locked at a multiple of 60 Hz with new
+        // frames held for their refresh (PresentAt); 1 otherwise.
+        int HoldMultiple() const;
         double PeriodNs() const;  // the vblank period now (locked at a multiple: that many refreshes)
         // Main thread, before presenting a new game frame released by the
         // vblank that fired at `vblank`: not before the time returned (ns,
@@ -123,7 +126,12 @@ namespace video
         // refresh before the one the frame targets (the refresh `multiple`
         // after the last refresh before `vblank`, plus any lateness the lock
         // has accepted), so FIFO shows it on its target and no sooner.
-        int64_t PresentAt(int64_t vblank) const;
+        int64_t PresentAt(int64_t vblank) const { return PresentAt(vblank, 0.0f); }
+        // An in-between picture (game/hfr.h) presented after the vblank at
+        // `vblank` and before the next one's frame: `between` (its fraction of
+        // the step) of the vblank's refreshes after the target of a frame
+        // released by `vblank` (one refresh at 120 Hz for 0.5).
+        int64_t PresentAt(int64_t vblank, float between) const;
         // NFSMW_PRESENT_HOLD=0: frames are presented when ready at a multiple
         // too (the lock alone, for comparison).
         void SetHold(bool on);

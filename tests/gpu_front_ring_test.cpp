@@ -359,7 +359,7 @@ static void TestSources(const char* rendererPath, const char* presenterPath)
     CHECK(lock != std::string::npos && choose != std::string::npos && lock < choose,
         "ClaimFrontImage chooses with the presenter's image and the waiting one under s_pendingMutex");
     CHECK(claimBody.find("s_pendingImage=VK_NULL_HANDLE;") != std::string::npos, "and takes the waiting frame back when it must");
-    const std::string take = Between(presenter, "std::lock_guardlock(s_pendingMutex);if(s_pendingNew){pixels.swap(s_pending);",
+    const std::string take = Between(presenter, "elseif(s_pendingNew){pixels.swap(s_pending);",
         "constboolupload=!pixels.empty();");
     CHECK(!take.empty(), "RunFrame's take not found");
     CHECK(take.find("gpuImage=s_pendingImage;") != std::string::npos && take.find("s_lastImage=gpuImage;") != std::string::npos,

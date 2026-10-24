@@ -11,6 +11,7 @@
 #include <stdafx.h>
 #include "light_trails.h"
 #include "frame_time.h"
+#include "hfr.h"
 
 #include <kernel/function.h>
 
@@ -92,7 +93,10 @@ namespace
                 s_lastPruneMs = ms;
             }
             History& h = s_cars[info];
-            h.Add(ms, now);
+            // SPIKE (v017-hfr-spike): the in-between picture (game/hfr.cpp) draws a blended pose at the frame's
+            // game time; only the real picture's pose goes into the history (the ring itself is put back).
+            if (!hfr::InBetween())
+                h.Add(ms, now);
             fill = FillFor(h, ms);
         }
         const uint32_t slot = uint32_t(newest);

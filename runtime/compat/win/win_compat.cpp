@@ -11,6 +11,8 @@
 #include "sys/resource.h"
 #include <psapi.h>
 #include <cerrno>
+#include <csignal>
+#include <exception>
 #include <string>
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
@@ -519,10 +521,72 @@ namespace winseh
         }
     }
 
+    namespace
+    {
+        // The stack as RVAs of the exe (llvm-symbolizer --obj=<the
+        // unstripped exe> --adjust-vma=0x140000000 names them).
+        void LogStack(const char* why)
+        {
+            void* frames[48];
+            const USHORT n = CaptureStackBackTrace(1, 48, frames, nullptr);
+            const uintptr_t image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            char buf[2048];
+            int len = snprintf(buf, sizeof(buf), "[crash] %s; stack (RVA):", why);
+            for (USHORT i = 0; i < n && len < int(sizeof(buf)) - 24; i++)
+            {
+                const uintptr_t f = reinterpret_cast<uintptr_t>(frames[i]);
+                len += snprintf(buf + len, sizeof(buf) - size_t(len), " 0x%llX", (unsigned long long)(f - image));
+            }
+            len += snprintf(buf + len, sizeof(buf) - size_t(len), "\n");
+            fwrite(buf, 1, size_t(len), stderr);
+            fflush(stderr);
+            if (FILE* f = fopen("SpeedBreaker-crash.txt", "a"))
+            {
+                fwrite(buf, 1, size_t(len), f);
+                fclose(f);
+            }
+        }
+
+        // abort() (an assertion, a failed Check, std::terminate) ends the
+        // process with __fastfail, past every exception handler: said here
+        // first.
+        void OnAbort(int)
+        {
+            LogStack("abort()");
+        }
+
+        void OnTerminate()
+        {
+            const char* what = "std::terminate (no exception)";
+            std::string text;
+            if (std::exception_ptr e = std::current_exception())
+            {
+                try
+                {
+                    std::rethrow_exception(e);
+                }
+                catch (const std::exception& x)
+                {
+                    text = std::string("an uncaught exception: ") + x.what();
+                    what = text.c_str();
+                }
+                catch (...)
+                {
+                    what = "an uncaught exception (not a std::exception)";
+                }
+            }
+            LogStack(what);
+            std::signal(SIGABRT, SIG_DFL);
+            std::abort();
+        }
+    }
+
     void Install(FaultFn fn)
     {
         s_fn = fn;
         AddVectoredExceptionHandler(1, Veh);
         SetUnhandledExceptionFilter(Unhandled);
+        std::signal(SIGABRT, OnAbort);
+        std::set_terminate(OnTerminate);
     }
 }

@@ -54,14 +54,15 @@ namespace writewatch
         // while another of its guest pages still has one: protected again
         // at the next Rearm (submission boundary).
         std::vector<uint32_t> s_rearm;
-        // NFSMW_LOG_GUARD=1: what each guest page was guarded for, logged on
-        // stalls (the first 400; NFSMW_LOG_GUARD=<n> above 1: the first n).
+        // NFSMW_LOG_GUARD=1: what each guest page was guarded for, logged on stalls.
+        // NFSMW_LOG_GUARD=<s> (more than 1): the stalls from s seconds after launch
+        // (the first 400 lines otherwise end in the menus; HFR M3).
         const bool s_logGuard = std::getenv("NFSMW_LOG_GUARD") != nullptr;
-        const uint32_t s_logGuardMax = [] {
+        const auto s_logGuardFrom = std::chrono::steady_clock::now() + std::chrono::milliseconds(int64_t([] {
             const char* v = std::getenv("NFSMW_LOG_GUARD");
-            const long n = v ? std::atol(v) : 0;
-            return n > 1 ? uint32_t(std::min(n, 10'000'000L)) : 400u;
-        }();
+            const double s = v ? std::atof(v) : 0.0;
+            return s > 1.0 ? s * 1000.0 : 0.0;
+        }()));
         std::unique_ptr<std::atomic<const char*>[]> s_gpuTag;
         std::unique_ptr<std::atomic<uint32_t>[]> s_gpuRange[2];
         std::atomic<uint64_t> s_stalls{ 0 }, s_stallUs{ 0 }, s_faults{ 0 }, s_opened{ 0 };
@@ -159,15 +160,15 @@ namespace writewatch
         // page protected just for the GPU's use (vertex data) has no texture
         // to keep (every path that ends a watch marks all its guest pages).
         // Unsure cases mark the whole host page as before. In use with host
-        // pages of 2 to 32 guest pages: by default on Apple (iPad race:
-        // 13.9 -> 0 texture reloads a frame with the renderer's fusion
-        // toggles), only when set elsewhere; =0 turns it off (null arrays).
-#ifdef __APPLE__
-        constexpr bool kSubpagesByDefault = true;
-#else
-        constexpr bool kSubpagesByDefault = false;
-#endif
-        const bool s_watchSubpages = [] { const char* v = std::getenv("NFSMW_WATCH_SUBPAGES"); return v ? v[0] == '1' : kSubpagesByDefault; }();
+        // pages of 2 to 32 guest pages: by default wherever host pages are
+        // over 4 KB (Apple's 16 KB, iPad race: 13.9 -> 0 texture reloads a
+        // frame with the renderer's fusion toggles; a 16 KB Android device
+        // or Linux kernel alike), never on 4 KB hosts, where a host page is a
+        // guest page; =0 turns it off (null arrays), =1 on.
+        const bool s_watchSubpages = [] {
+            const char* v = std::getenv("NFSMW_WATCH_SUBPAGES");
+            return v ? v[0] == '1' : size_t(sysconf(_SC_PAGESIZE)) > (size_t(1) << kSubShift);
+        }();
         constexpr uint32_t kSnapSlots = 128, kSnapAge = 32;
         static_assert(kSnapSlots < 256, "s_snapOf holds a slot + 1 in a byte");
         // Under s_protectMutex: the slots (pending: the guest pages not
@@ -770,7 +771,7 @@ namespace writewatch
                 static std::atomic<uint32_t> logged{ 0 };
                 Dl_info dl{};
                 dladdr(t_faultPc, &dl);
-                if (logged++ < s_logGuardMax)
+                if (std::chrono::steady_clock::now() >= s_logGuardFrom && logged++ < 400)
                     fprintf(stderr, "[guard] stall %llu us (%s %08X): %s %08X+%X (submission %llu%s) in %s\n", (unsigned long long)us,
                         t_faultWrite ? "write" : "read", t_faultPhysical, s_gpuTag[sub].load(), s_gpuRange[0][sub].load(),
                         s_gpuRange[1][sub].load(), (unsigned long long)use, done ? "" : ", gave up", dl.dli_sname ? dl.dli_sname : "?");
