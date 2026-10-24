@@ -18,6 +18,8 @@ endfunction()
 sb_test(block_ranges_test)
 # Where guest memory and the upload ring go (gpu/memory_plan.h, header only).
 sb_test(memory_plan_test)
+# A discrete GPU's PCIe link for the logs (gpu/pcie_link.h, header only; issue #40).
+sb_test(pcie_link_test)
 sb_test(zpd_report_test)
 # The resolve shader's 24-bit depth pack (gpu/depth24_glsl.h), header only;
 # renderer.cpp is read to check its resolve shader uses it.
@@ -60,6 +62,10 @@ sb_test(covers_test)
 # line that says so (gpu/pipeline_cache_header.h, header only).
 sb_test(pipeline_cache_header_test)
 sb_test(picture_fit_test SOURCES ${RT}/video/picture_fit.cpp)
+# GitHub #34's native rows and columns (video::NativeShape, AutoNativeScale):
+# a Steam Deck's 1280x800 at 1x renders 1280x800, 16:9 pictures keep their
+# scale exactly, Auto takes the native shape within its budget.
+sb_test(native_rows_test SOURCES ${RT}/video/picture_fit.cpp)
 # Which Vulkan device the presenter draws with, and its log line
 # (video/gpu_choice.h, header only).
 sb_test(gpu_choice_test)
@@ -113,6 +119,12 @@ sb_test(refresh_fit_test SOURCES ${RT}/video/refresh_fit.cpp)
 # user/settings.cpp).
 sb_test(refresh_notice_test SOURCES ${RT}/video/refresh_fit.cpp ${RT}/user/settings.cpp
     ARGS ${CMAKE_CURRENT_BINARY_DIR}/refresh_notice_scratch)
+# The one-time note that an Xbox controller by USB on a Mac takes no rumble
+# (hid/rumble_note.h): a wired Xbox pad on a Mac gets it once, a DualSense
+# wired, an Xbox pad over Bluetooth and other platforms never; the dismissal
+# in settings.toml, in a scratch folder (user/settings.cpp).
+sb_test(rumble_note_test SOURCES ${RT}/user/settings.cpp
+    ARGS ${CMAKE_CURRENT_BINARY_DIR}/rumble_note_scratch)
 # How late the guest vblank's thread wakes on this machine, alone and with
 # every core busy (video/vblank_timer.cpp; checked on macOS, where its
 # scheduling changed in v0.1.4).
@@ -230,6 +242,11 @@ set_target_properties(key_names_test PROPERTIES SKIP_BUILD_RPATH OFF)
 # vendors; no SDL).
 sb_test(settings_keys_test SOURCES ${RT}/user/settings.cpp)
 target_include_directories(settings_keys_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
+# Settings > Game > Language (game/language.h, header only, and the option in
+# user/settings.cpp): English untouched for every caller, the game's ten
+# languages, the movie suffix by the files present, what the files give.
+sb_test(language_test SOURCES ${RT}/user/settings.cpp)
+target_include_directories(language_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
 # The keyboard's controls and how held keys become a pad (hid/key_map.h), header only.
 sb_test(key_map_test)
 # A USB steering wheel as the pad (hid/wheel_map.h, header only): which

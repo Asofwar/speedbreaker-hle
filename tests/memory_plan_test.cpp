@@ -309,10 +309,38 @@ static void Types()
         Size(256 * MB).c_str(), Size(8573157376ull).c_str(), Size(16621477888ull).c_str());
 }
 
+// Issue #40: an RTX 5060 Ti on NVIDIA 615.78.08 (Linux), a 246 MB BAR window
+// (its log: "0 16 GB device-local, 1 12 GB, 2 246 MB device-local; types
+// 0:1/0 1:0/1 2:1/6 3:1/E 4:2/7"). Both in system memory, as its log says,
+// and the log now says the GPU reads them over PCIe.
+static void OverPcie()
+{
+    printf("over PCIe (issue #40):\n");
+    Memory m{ { { 0x0, 1 }, { 0x1, 0 }, { 0x6, 1 }, { 0xE, 1 }, { 0x7, 2 } }, { 16 * GB, 12 * GB, 246 * MB } };
+    Plan g = PlanGuestMemory(m, Input(Gpu::kDiscrete, true, 4));
+    Expect("RTX 5060 Ti 246 MB BAR, guest memory", g, false, "import,copy-system:2,copy-cached:3,copy-vram:4!", "no resizable BAR");
+    Expect("RTX 5060 Ti 246 MB BAR, ring (imported)", PlanRing(m, ~0u, kNoType), true, "ring-cached:3,ring-system:2,ring-vram:4!");
+    // Imported guest memory and a cached ring: both named.
+    const char* both = OverPcieNote(Gpu::kDiscrete, false, false);
+    CHECK(both && std::string(both).find("upload ring") != std::string::npos && std::string(both).find("Resizable BAR") != std::string::npos,
+        "both over PCIe: %s", both ? both : "(none)");
+    // NFSMW_RING_MEMORY=vram (the ring in the BAR window): guest memory only.
+    const char* guest = OverPcieNote(Gpu::kDiscrete, false, true);
+    CHECK(guest && std::string(guest).find("upload ring") == std::string::npos, "guest over PCIe: %s", guest ? guest : "(none)");
+    // With resizable BAR the copy is in VRAM: nothing to say.
+    CHECK(!OverPcieNote(Gpu::kDiscrete, true, true), "resizable BAR noted");
+    CHECK(!OverPcieNote(Gpu::kDiscrete, true, false), "copy in VRAM, ring cached noted");
+    // Integrated GPUs and unified memory (the Deck, the Frame, Apple) read
+    // system memory as their own.
+    CHECK(!OverPcieNote(Gpu::kIntegrated, false, false), "integrated noted");
+    CHECK(!OverPcieNote(Gpu::kOther, false, false), "other noted");
+}
+
 int main()
 {
     Unchanged();
     NoRebar();
+    OverPcie();
     Intel();
     EnvOverrides();
     TestHook();

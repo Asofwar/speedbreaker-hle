@@ -325,6 +325,25 @@ namespace gpu::memplan
         return p;
     }
 
+    // A discrete GPU that reads guest memory from system memory (imported, or
+    // a copy outside VRAM: no resizable BAR) fetches every vertex, constant
+    // and texture load, and stores every resolve, across PCIe. On the devices
+    // we measured, the ring alone in system memory doubled the GPU's time
+    // (NOTES: Steam Machine); issue #40's RTX 5060 Ti, on a PCIe 3.0 x8 link
+    // with both there, took 20-25 ms a frame at 1x. For the log: nullptr when
+    // the GPU reads its guest memory locally (VRAM, or an integrated GPU's
+    // own memory), else what to try.
+    inline const char* OverPcieNote(Gpu gpu, bool guestInVram, bool ringInVram)
+    {
+        if (gpu != Gpu::kDiscrete || guestInVram)
+            return nullptr;
+        return ringInVram
+            ? "the GPU reads guest memory over PCIe (it is in system memory); where Resizable BAR is off, turning it on "
+              "(\"Above 4G Decoding\" and \"Re-Size BAR\" in the firmware) puts it in VRAM"
+            : "the GPU reads guest memory and the upload ring over PCIe (both are in system memory); where Resizable BAR "
+              "is off, turning it on (\"Above 4G Decoding\" and \"Re-Size BAR\" in the firmware) puts them in VRAM";
+    }
+
     // The upload ring. `guestType`: the memory type guest memory's copy went
     // to (kNoType: imported), whose 512 MB count against the ring's heap.
     inline Plan PlanRing(const Memory& m, uint32_t bits, uint32_t guestType, Place override = Place::kImport)

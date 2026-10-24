@@ -13,6 +13,7 @@
 #include <game/cover_callers.h>
 #include <gpu/covers.h>
 #include "gpu_choice.h"
+#include <gpu/pcie_link.h>
 #include "present_schedule.h"
 #include "hfr_schedule.h"
 #include <game/hfr.h>
@@ -2631,8 +2632,10 @@ void main()
         std::vector<VkExtensionProperties> avail(extAvail);
         vkEnumerateDeviceExtensionProperties(s_physical, nullptr, &extAvail, avail.data());
         bool presentId = false, presentWait = false, hostImport = false, shadingRate = false, displayTiming = false;
+        bool pciBusInfo = false;  // (a property query only: not enabled)
         for (auto& e : avail)
         {
+            pciBusInfo |= strcmp(e.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0;
             displayTiming |= strcmp(e.extensionName, VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) == 0;
             if (strcmp(e.extensionName, "VK_KHR_portability_subset") == 0)
                 devExts.push_back("VK_KHR_portability_subset");
@@ -2889,12 +2892,29 @@ void main()
                     vkGetPhysicalDeviceProperties2(s_physical, &props2);
                     driver = std::format("{} {}", driverProps.driverName, driverProps.driverInfo);
                 }
+                // Issue #40: a discrete GPU's PCIe link (Linux: sysfs), which
+                // bounds it when guest memory is in system memory (gpu/pcie_link.h).
+                std::string link;
+#if defined(__linux__) && !defined(__ANDROID__)
+                if (pciBusInfo && props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && props.apiVersion >= VK_API_VERSION_1_1)
+                {
+                    VkPhysicalDevicePCIBusInfoPropertiesEXT pci{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT };
+                    VkPhysicalDeviceProperties2 props2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+                    props2.pNext = &pci;
+                    vkGetPhysicalDeviceProperties2(s_physical, &props2);
+                    link = gpu::pcie::Describe(gpu::pcie::Read(gpu::pcie::SysfsDir(pci.pciDomain, pci.pciBus, pci.pciDevice, pci.pciFunction)));
+                    if (!link.empty())
+                        fprintf(stderr, "[video] PCIe link: %s\n", link.c_str());
+                }
+#else
+                (void)pciBusInfo;
+#endif
                 uint32_t loader = VK_API_VERSION_1_0;
                 vkEnumerateInstanceVersion(&loader);
-                report::SetSystemItem("GPU", std::format("{} ({}, {:04x}:{:04x}), {}, Vulkan {}.{}.{} (loader {}.{}.{})",
+                report::SetSystemItem("GPU", std::format("{} ({}, {:04x}:{:04x}), {}, Vulkan {}.{}.{} (loader {}.{}.{}){}",
                     props.deviceName, type, props.vendorID, props.deviceID, driver, VK_API_VERSION_MAJOR(props.apiVersion),
                     VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion), VK_API_VERSION_MAJOR(loader),
-                    VK_API_VERSION_MINOR(loader), VK_API_VERSION_PATCH(loader)));
+                    VK_API_VERSION_MINOR(loader), VK_API_VERSION_PATCH(loader), link.empty() ? std::string() : ", " + link));
                 UpdateDisplayItem();
             }
             if (s_gameMode && mode && nativeW > 0 && int64_t(mode->w) * mode->h < int64_t(nativeW) * nativeH)

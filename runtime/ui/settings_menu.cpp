@@ -13,6 +13,7 @@
 #include "ui.h"
 #include "quit_game.h"
 
+#include <game/language.h>  // the Language row's note: what the installed files give
 #include <report/report.h>
 #include <user/settings.h>
 #include <hid/key_map.h>     // the Controls page: one row per control, two keys each
@@ -94,6 +95,8 @@ namespace ui
         {
             if (c == Category::Wheel)
                 return hid::wheel::Found();
+            if (c == Category::Game)  // its one row, Language, isn't shown on iPhone and iPad
+                return !settings::Info(Id::GameLanguage).hidden;
 #if defined(__APPLE__) && TARGET_OS_IOS
             if (c == Category::Controls)
                 return SDL_HasKeyboard();
@@ -778,6 +781,29 @@ namespace ui
             {
                 ImGui::TextDisabled("The window is %s for now. The game starts %s, as set here.",
                     video::WindowFullscreen() ? "fullscreen" : "windowed", settings::GetBool(Id::Fullscreen) ? "fullscreen" : "windowed");
+                return;
+            }
+            // Language: what the installed files give the language chosen
+            // here (the one this run has, under NFSMW_LANGUAGE), then when
+            // it applies.
+            if (o.id == Id::GameLanguage)
+            {
+                const char* env = settings::EnvOverride(o.id);
+                const double value = env ? settings::GetValue(o.id) : settings::GetStoredValue(o.id);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", game::language::MenuNote(int32_t(value)).c_str());
+                ImGui::PopStyleColor();
+                if (env)
+                    ImGui::TextDisabled("%s sets this for this run: %s. The choice here is saved for later runs.", env,
+                        settings::FormatValue(o.id, value).c_str());
+                else if (settings::RestartPending(o.id))
+                {
+                    PushAccentText();
+                    ImGui::TextUnformatted("Takes effect the next time the game starts.");
+                    PopAccentText();
+                }
+                else
+                    ImGui::TextDisabled("Changes take effect the next time the game starts.");
                 return;
             }
             // The experiment's finer scale wins over Screen Resolution's.

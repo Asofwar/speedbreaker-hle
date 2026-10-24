@@ -133,6 +133,8 @@ namespace settings
         // Advanced
         AsyncShaders,
         PerformanceOverlay,
+        // Game (the [game] table)
+        GameLanguage,  // game/language.cpp: the game's language, game::language's ids (English = 0)
         Count
     };
     constexpr size_t kCount = size_t(Id::Count);
@@ -140,7 +142,7 @@ namespace settings
     // Key: a key code of user/key_names.h (0: no key), saved by its name
     // there ("w", "left_shift", "none"); the menu takes it from a key press.
     enum class Type : uint8_t { Bool, Int, Float, Enum, Key };
-    enum class Category : uint8_t { Display, Graphics, Audio, Input, Wheel, Controls, Advanced, Count };
+    enum class Category : uint8_t { Display, Graphics, Audio, Input, Wheel, Controls, Game, Advanced, Count };
     enum class Apply : uint8_t { Live, Restart };
 
     // Values of the enum options (GetInt returns them).
@@ -343,4 +345,11 @@ namespace settings
     // the [app] table is rewritten); any thread.
     bool RefreshNoticeShown(int hz);
     bool RecordRefreshNotice(int hz);
+
+    // The "no rumble over USB" note for an Xbox controller on a Mac
+    // (hid/rumble_note.h) was closed: [app] xbox_usb_rumble_note in
+    // settings.toml. Record sets it, in memory and in the file, as
+    // RecordRefreshNotice does; any thread.
+    bool RumbleNoteShown();
+    bool RecordRumbleNote();
 }

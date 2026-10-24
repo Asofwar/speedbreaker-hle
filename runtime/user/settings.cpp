@@ -1,6 +1,7 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING). See settings.h.
 #include "settings.h"
 #include <user/paths.h>
+#include <game/language.h>  // Settings > Game > Language: the languages
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -93,6 +95,22 @@ namespace settings
         // Screen Resolution scales an iOS view (Core Animation scales it up
         // to the screen); elsewhere the window's size is the player's.
         constexpr bool kPresentScaleHidden = !kFullscreenHidden;
+
+        // Settings > Game > Language: game/language.h's table, in its order.
+        constexpr auto kLanguageEntries = [] {
+            std::array<EnumEntry, std::size(game::language::kLanguages)> entries {};
+            for (size_t i = 0; i < entries.size(); i++)
+                entries[i] = { game::language::kLanguages[i].id, game::language::kLanguages[i].token, game::language::kLanguages[i].name };
+            return entries;
+        }();
+        // The game folder can't be reached on iPhone and iPad, and the
+        // installed files decide what a language gives (the note under the
+        // row): the row isn't shown there.
+#if defined(__APPLE__) && TARGET_OS_IOS
+        constexpr bool kLanguageHidden = true;
+#else
+        constexpr bool kLanguageHidden = false;
+#endif
 
         constexpr EnumEntry kAspectEntries[] = {
             { int32_t(AspectMode::Auto), "auto", "Fill Screen" },
@@ -256,7 +274,7 @@ namespace settings
               .env = "NFSMW_TEXTURE_MIPS", .defaultValue = 1 },
             { .id = Id::InternalResolution, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
               .table = "video", .key = "internal_resolution", .label = "Internal Resolution",
-              .description = "Render the 3D scene above the 360's 720p. 1.5x is 1080p, a little over half the pixels of 2x. Auto: from the screen (1440p: 2x, or 3x2 filling an ultrawide).",
+              .description = "Render the 3D scene above the 360's 720p. 1.5x is 1080p, a little over half the pixels of 2x. On a screen of another shape filled by Fill Screen, each step renders that shape: 1x on a Steam Deck is its own 1280x800. Auto: from the screen (1440p: 2x; a Steam Deck: its 1280x800).",
               .env = "NFSMW_RESOLUTION", .defaultValue = kResolutionAuto, .entries = kResolutionEntries },
             { .id = Id::WindowWidth, .category = Category::Display, .type = Type::Int, .apply = Apply::Restart, .hidden = true,
               .table = "video", .key = "window_width", .label = "Window Width",
@@ -413,6 +431,11 @@ namespace settings
               .table = "advanced", .key = "performance_overlay", .label = "Performance Overlay",
               .description = "Show the frame rate and frame time in a corner of the screen.",
               .env = "NFSMW_PERF_OVERLAY", .defaultValue = 0 },
+            // Game
+            { .id = Id::GameLanguage, .category = Category::Game, .type = Type::Enum, .apply = Apply::Restart, .hidden = kLanguageHidden,
+              .table = "game", .key = "language", .label = "Language",
+              .description = "The language of the game's menus and race text: English (the USA disc's), or French, German, Italian, Spanish, Dutch, Swedish, Danish, Polish or Finnish, from the same disc's files. The movies and the speech stay in English, as the disc has them.",
+              .env = "NFSMW_LANGUAGE", .defaultValue = double(game::language::kEnglish), .entries = kLanguageEntries },
         };
         static_assert(std::size(kOptions) == kCount, "one row per settings::Id");
 
@@ -504,6 +527,11 @@ namespace settings
             return list;
         }
 
+        // xbox_usb_rumble_note: the "no rumble over USB" note for an Xbox
+        // controller on a Mac (hid/rumble_note.h) was closed.
+        constexpr const char* kRumbleNoteKey = "xbox_usb_rumble_note";
+        std::atomic<bool> s_rumbleNoteShown{ false };
+
         std::vector<int> ParseRates(std::string_view text)
         {
             std::vector<int> out;
@@ -535,9 +563,13 @@ namespace settings
             if (!rates.empty())
                 rates = std::format("# Screen refresh rates (Hz) the refresh-rate notice was closed for: it isn't shown for them again.\n"
                     "{} = \"{}\"\n", kRefreshNoticesKey, rates);
-            if (version.empty() && rates.empty())
+            std::string rumble;
+            if (s_rumbleNoteShown.load(std::memory_order_relaxed))
+                rumble = std::format("# The \"no rumble over USB\" note for an Xbox controller on a Mac was closed: it isn't shown again.\n"
+                    "{} = true\n", kRumbleNoteKey);
+            if (version.empty() && rates.empty() && rumble.empty())
                 return "";
-            return std::format("\n[{}]\n{}{}", kAppTable, version, rates);
+            return std::format("\n[{}]\n{}{}{}", kAppTable, version, rates, rumble);
         }
 
         // `text` (a settings.toml) without its [app] table: from a line that
@@ -1204,6 +1236,7 @@ namespace settings
         case Category::Input: return "Input";
         case Category::Controls: return "Controls";
         case Category::Wheel: return "Wheel";
+        case Category::Game: return "Game";
         case Category::Advanced: return "Advanced";
         default: return "";
         }
@@ -1420,6 +1453,7 @@ namespace settings
         std::array<std::optional<double>, kCount> fileValues;
         std::string text, readError, lastError, lastVersion;
         std::vector<int> notices;
+        bool rumbleNote = false;
         size_t fromFile = 0;
         ReadStatus status = ReadFile(path, text, readError);
         if (status == ReadStatus::Missing)
@@ -1488,6 +1522,15 @@ namespace settings
                                 NodeText(node).c_str());
                         continue;
                     }
+                    if (tableKey.str() == kAppTable && key.str() == kRumbleNoteKey)
+                    {
+                        if (auto v = node.as_boolean())
+                            rumbleNote = v->get();
+                        else
+                            fprintf(stderr, "[settings] %s: %s = %s isn't true or false; ignored\n", path.filename().c_str(), name.c_str(),
+                                NodeText(node).c_str());
+                        continue;
+                    }
                     if (tableKey.str() == kAppTable && key.str() == kLastVersionKey)
                     {
                         if (auto v = node.as_string())
@@ -1532,6 +1575,7 @@ namespace settings
             LastErrorText() = lastError;
             LastVersionText() = lastVersion;
             RefreshNoticesList() = notices;
+            s_rumbleNoteShown.store(rumbleNote, std::memory_order_relaxed);
             s_fileFound = status != ReadStatus::Missing;
             s_fileLoaded = status == ReadStatus::Ok && lastError.empty();
             detail::g_generation.fetch_add(1, std::memory_order_release);
@@ -1692,6 +1736,53 @@ namespace settings
         if (std::string failed = WriteAtomically(path, WithoutAppTable(text) + AppTable(lastVersion, notices)); !failed.empty())
         {
             fprintf(stderr, "[settings] the refresh notice's %d Hz isn't recorded: %s\n", hz, failed.c_str());
+            return false;
+        }
+        std::lock_guard lock(s_mutex);
+        s_fileFound = s_fileLoaded = true;
+        if (LoadedPath().empty())
+            LoadedPath() = path;
+        return true;
+    }
+
+    bool RumbleNoteShown()
+    {
+        return s_rumbleNoteShown.load(std::memory_order_relaxed);
+    }
+
+    bool RecordRumbleNote()
+    {
+        std::lock_guard saveLock(s_saveMutex);
+        std::filesystem::path path;
+        std::string lastVersion;
+        std::vector<int> notices;
+        {
+            std::lock_guard lock(s_mutex);
+            if (s_rumbleNoteShown.exchange(true, std::memory_order_relaxed))
+                return true;  // this run doesn't show it again, saved or not
+            if (s_fileFound && !s_fileLoaded)
+            {
+                fprintf(stderr, "[settings] the rumble note isn't recorded: settings.toml didn't load\n");
+                return false;
+            }
+            path = LoadedPath().empty() ? DefaultPath() : LoadedPath();
+            lastVersion = LastVersionText();
+            notices = RefreshNoticesList();
+        }
+        // Only the [app] table changes, as for RecordVersion.
+        std::string text, error;
+        ReadStatus status = ReadFile(path, text, error);
+        if (status == ReadStatus::Failed)
+        {
+            fprintf(stderr, "[settings] the rumble note isn't recorded: can't read %s: %s\n", path.c_str(), error.c_str());
+            return false;
+        }
+        if (status == ReadStatus::Missing)
+            text = "# SpeedBreaker settings. The settings menu writes every option here when one\n"
+                   "# changes; until then each one keeps its default.\n";
+        if (std::string failed = WriteAtomically(path, WithoutAppTable(text) + AppTable(lastVersion, notices)); !failed.empty())
+        {
+            fprintf(stderr, "[settings] the rumble note isn't recorded: %s\n", failed.c_str());
             return false;
         }
         std::lock_guard lock(s_mutex);
