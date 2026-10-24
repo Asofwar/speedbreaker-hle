@@ -133,6 +133,12 @@ namespace settings
             { 32, "4x", "4x (2880p)" },
         };
 
+        constexpr EnumEntry kShadowEntries[] = {
+            { 1600, "1600", "1600 (original)" },
+            { 1200, "1200", "1200" },
+            { 800, "800", "800 (fastest)" },
+        };
+
         constexpr EnumEntry kColorFilterEntries[] = {
             { int32_t(ColorFilterMode::Original), "original", "Original" },
             { int32_t(ColorFilterMode::Soft), "soft", "Soft" },
@@ -288,6 +294,14 @@ namespace settings
               .table = "video", .key = "color_temperature", .label = "Color Temperature",
               .description = "Warmer (more red, less blue) up, cooler down.",
               .env = "NFSMW_COLOR_TEMPERATURE", .defaultValue = 0, .min = -5, .max = 5, .step = 1 },
+            { .id = Id::OrangeTint, .category = Category::Display, .type = Type::Float, .apply = Apply::Live,
+              .table = "video", .key = "remove_orange_tint", .label = "Remove Orange Tint",
+              .description = "Removes the orange cast of the game's own colour grade: every colour channel gets the same gain curve (brightness kept, hue shift gone), in every scene. 0 is the original look.",
+              .env = "NFSMW_ORANGE_TINT", .defaultValue = 0.0, .min = 0, .max = 1, .step = 0.1 },
+            { .id = Id::RichBlacks, .category = Category::Display, .type = Type::Float, .apply = Apply::Restart,
+              .table = "video", .key = "rich_blacks", .label = "Rich Blacks",
+              .description = "Deeper blacks and darker shadows: the game builds its own display ramp from its brightness, and this deepens that curve where it is built. Applies from the next start. 0 is the game's own.",
+              .env = "NFSMW_RICH_BLACKS", .defaultValue = 0.0, .min = 0, .max = 1, .step = 0.05 },
             { .id = Id::DisplayGamma, .category = Category::Display, .type = Type::Bool, .apply = Apply::Live,
               .table = "video", .key = "xbox_display_gamma", .label = "Xbox 360 Display Gamma",
               .description = "The gamma ramp the game itself sets for a real Xbox 360's TV output: a little deeper shadows and brighter mid-tones, as on the console. Off: the flatter picture of SpeedBreaker 0.1.3 and earlier.",
@@ -317,6 +331,14 @@ namespace settings
               .description = "Most Wanted's yellow-green tint, its desaturation and its vignette in races and free roam. "
                   "Original: as on the Xbox 360. Soft: half as strong. Off: none (the glow and the fades stay).",
               .env = "NFSMW_COLOR_FILTER", .defaultValue = double(ColorFilterMode::Original), .entries = kColorFilterEntries },
+            { .id = Id::Bloom, .category = Category::Graphics, .type = Type::Float, .apply = Apply::Live,
+              .table = "video", .key = "bloom", .label = "Bloom",
+              .description = "A soft glow around bright areas such as the sun, lights and chrome. 0.4 is the game's own, 0 turns it off.",
+              .env = "NFSMW_BLOOM", .defaultValue = 0.4, .min = 0, .max = 1, .step = 0.1 },
+            { .id = Id::ShadowResolution, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Restart,
+              .table = "video", .key = "shadow_resolution", .label = "Shadow Resolution",
+              .description = "The size of the sun's shadow map. Smaller is faster (the shadow pass is about a fifth of a race frame) but softer. Changed in the game's own code where it creates the map. Applies from the next start.",
+              .env = "NFSMW_SHADOW_SIZE", .defaultValue = 1600, .entries = kShadowEntries },
             { .id = Id::WindowWidth, .category = Category::Display, .type = Type::Int, .apply = Apply::Restart, .hidden = true,
               .table = "video", .key = "window_width", .label = "Window Width",
               .description = "The window's width when the game starts.",
@@ -481,6 +503,10 @@ namespace settings
               .table = "advanced", .key = "performance_overlay", .label = "Performance Overlay",
               .description = "Show the frame rate and frame time in a corner of the screen.",
               .env = "NFSMW_PERF_OVERLAY", .defaultValue = 0 },
+            { .id = Id::SkipStartupMovies, .category = Category::Advanced, .type = Type::Bool, .apply = Apply::Live,
+              .table = "advanced", .key = "skip_startup_movies", .label = "Skip Startup Movies",
+              .description = "Skip the logos and the title-screen movie at launch.",
+              .env = "NFSMW_SKIP_STARTUP_MOVIES", .defaultValue = 1 },
             // Game
             { .id = Id::GameLanguage, .category = Category::Game, .type = Type::Enum, .apply = Apply::Restart, .hidden = kLanguageHidden,
               .table = "game", .key = "language", .label = "Language",

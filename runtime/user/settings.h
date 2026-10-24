@@ -52,12 +52,16 @@ namespace settings
         Contrast,      // the same, after it
         Saturation,
         ColorTemperature,
+        OrangeTint,    // strength of the cast removal (game/colour_grade.cpp)
+        RichBlacks,    // the game's display ramp deepened where it builds it (game/colour_grade.cpp)
         DisplayGamma,  // the 360's display gamma ramp (video/display_gamma.h)
         Sharpening,
         Anisotropy,
         Mipmaps,
         InternalResolution,
         ColorFilter,   // the race's colour treatment (gpu/renderer.cpp's visual treatment): ColorFilterMode
+        Bloom,             // the game's own bloom scale (game/colour_grade.cpp)
+        ShadowResolution,  // the sun shadow map's size (game/colour_grade.cpp)
         WindowWidth,   // hidden: the window's size, remembered between runs
         WindowHeight,  // hidden
         // Audio
@@ -140,6 +144,7 @@ namespace settings
         // Advanced
         AsyncShaders,
         PerformanceOverlay,
+        SkipStartupMovies,  // the logos and the title movie at launch answered as "no movie" (game/startup_movies.cpp)
         // Game (the [game] table)
         GameLanguage,  // game/language.cpp: the game's language, game::language's ids (English = 0)
         Count
