@@ -1504,6 +1504,17 @@ uint32_t XamInputGetCapabilities(uint32_t userIndex, uint32_t flags, XAMINPUT_CA
     return ERROR_SUCCESS;
 }
 
+namespace hid
+{
+    namespace
+    {
+        std::atomic<uint8_t> s_gameRightTrigger{ 0 }, s_gameLeftTrigger{ 0 };
+    }
+
+    uint8_t GameRightTrigger() { return s_gameRightTrigger.load(std::memory_order_relaxed); }
+    uint8_t GameLeftTrigger() { return s_gameLeftTrigger.load(std::memory_order_relaxed); }
+}
+
 uint32_t XamInputGetState(uint32_t userIndex, uint32_t flags, XAMINPUT_STATE* state)
 {
     Pad p;
@@ -1533,6 +1544,8 @@ uint32_t XamInputGetState(uint32_t userIndex, uint32_t flags, XAMINPUT_STATE* st
         if ((userIndex != 0 && userIndex != 0xFF) || !(s_deviceConnected || !s_script.empty()))
             return ERROR_DEVICE_NOT_CONNECTED;
         p = CurrentPadLocked();
+        hid::s_gameRightTrigger.store(p.rightTrigger, std::memory_order_relaxed);
+        hid::s_gameLeftTrigger.store(p.leftTrigger, std::memory_order_relaxed);
         static Pad last;
         if (memcmp(&p, &last, sizeof(p)) != 0)
         {

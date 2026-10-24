@@ -55,6 +55,11 @@
 
 namespace hid
 {
+    // The accelerator and brake triggers (0..255) as the game last read them (after the deadzones), from any
+    // thread: the motion blur follows them (gpu/renderer.cpp).
+    uint8_t GameRightTrigger();
+    uint8_t GameLeftTrigger();
+
     // Main thread, after SDL video is up.
     void Initialize();
     // Main thread, as the game itself starts (after the installer, if it

@@ -139,6 +139,19 @@ namespace settings
             { 800, "800", "800 (fastest)" },
         };
 
+        constexpr EnumEntry kReflectionEntries[] = {
+            { 1, "every_frame", "Every frame (original)" },
+            { 2, "every_2", "Every 2nd frame" },
+            { 3, "every_3", "Every 3rd frame" },
+            { 6, "every_6", "Every 6th frame" },
+        };
+
+        constexpr EnumEntry kTonemapEntries[] = {
+            { 0, "filmic", "Filmic" },
+            { 1, "agx", "AgX" },
+            { 2, "off", "Off" },
+        };
+
         constexpr EnumEntry kColorFilterEntries[] = {
             { int32_t(ColorFilterMode::Original), "original", "Original" },
             { int32_t(ColorFilterMode::Soft), "soft", "Soft" },
@@ -298,6 +311,10 @@ namespace settings
               .table = "video", .key = "remove_orange_tint", .label = "Remove Orange Tint",
               .description = "Removes the orange cast of the game's own colour grade: every colour channel gets the same gain curve (brightness kept, hue shift gone), in every scene. 0 is the original look.",
               .env = "NFSMW_ORANGE_TINT", .defaultValue = 0.0, .min = 0, .max = 1, .step = 0.1 },
+            { .id = Id::ModernLook, .category = Category::Display, .type = Type::Float, .apply = Apply::Live,
+              .table = "video", .key = "modern_look", .label = "Modern Look",
+              .description = "A modern colour grade added to the game's own final shader: richer colours (dull ones most) and a filmic contrast curve. 0 is the original look.",
+              .env = "NFSMW_MODERN_LOOK", .defaultValue = 0.0, .min = 0, .max = 1, .step = 0.1 },
             { .id = Id::RichBlacks, .category = Category::Display, .type = Type::Float, .apply = Apply::Restart,
               .table = "video", .key = "rich_blacks", .label = "Rich Blacks",
               .description = "Deeper blacks and darker shadows: the game builds its own display ramp from its brightness, and this deepens that curve where it is built. Applies from the next start. 0 is the game's own.",
@@ -331,14 +348,34 @@ namespace settings
               .description = "Most Wanted's yellow-green tint, its desaturation and its vignette in races and free roam. "
                   "Original: as on the Xbox 360. Soft: half as strong. Off: none (the glow and the fades stay).",
               .env = "NFSMW_COLOR_FILTER", .defaultValue = double(ColorFilterMode::Original), .entries = kColorFilterEntries },
+            { .id = Id::AmbientOcclusion, .category = Category::Graphics, .type = Type::Float, .apply = Apply::Live,
+              .table = "video", .key = "ambient_occlusion", .label = "Ambient Occlusion",
+              .description = "Darkens creases and where things meet the ground, from the scene's depth. 0 turns it off. Costs about 1 to 3 ms of GPU time a frame.",
+              .env = "NFSMW_SSAO", .defaultValue = 0.0, .min = 0, .max = 1, .step = 0.1 },
+            { .id = Id::MotionBlur, .category = Category::Graphics, .type = Type::Float, .apply = Apply::Live,
+              .table = "video", .key = "motion_blur", .label = "Motion Blur",
+              .description = "A radial speed blur toward the screen's centre in races, stronger at the edges and on the road; it follows the accelerator and the brake. 0 turns it off.",
+              .env = "NFSMW_MOTION_BLUR", .defaultValue = 0.0, .min = 0, .max = 1, .step = 0.1 },
             { .id = Id::Bloom, .category = Category::Graphics, .type = Type::Float, .apply = Apply::Live,
               .table = "video", .key = "bloom", .label = "Bloom",
               .description = "A soft glow around bright areas such as the sun, lights and chrome. 0.4 is the game's own, 0 turns it off.",
               .env = "NFSMW_BLOOM", .defaultValue = 0.4, .min = 0, .max = 1, .step = 0.1 },
+            { .id = Id::ModernLighting, .category = Category::Graphics, .type = Type::Float, .apply = Apply::Live,
+              .table = "video", .key = "modern_lighting", .label = "Modern Lighting",
+              .description = "How much of the chosen tonemapper (below) is applied, inside the game's own final colour shader: richer mid-tones and softer highlights, white stays white. 0 is the original lighting.",
+              .env = "NFSMW_LIGHTING", .defaultValue = 0.0, .min = 0, .max = 1, .step = 0.1 },
+            { .id = Id::Tonemapper, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
+              .table = "video", .key = "tonemapper", .label = "Tonemapper",
+              .description = "The curve Modern Lighting applies, added to the game's own final shader. AgX: deep shadows, rich mid-tones and a soft shoulder that desaturates the brightest areas. Filmic: a simpler curve. Off: the game's own tone, with nothing added.",
+              .env = "NFSMW_TONEMAPPER", .defaultValue = 1, .entries = kTonemapEntries },
             { .id = Id::ShadowResolution, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Restart,
               .table = "video", .key = "shadow_resolution", .label = "Shadow Resolution",
               .description = "The size of the sun's shadow map. Smaller is faster (the shadow pass is about a fifth of a race frame) but softer. Changed in the game's own code where it creates the map. Applies from the next start.",
               .env = "NFSMW_SHADOW_SIZE", .defaultValue = 1600, .entries = kShadowEntries },
+            { .id = Id::ReflectionRefresh, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
+              .table = "video", .key = "reflection_refresh", .label = "Reflection Refresh",
+              .description = "The cars' reflections come from a cube map the game redraws (six passes) every frame, about a fifth of a heavy frame. Redrawing only some faces each frame, in turn, makes it much cheaper; the reflections then update a little less often.",
+              .env = "NFSMW_REFLECTION_REFRESH", .defaultValue = 1, .entries = kReflectionEntries },
             { .id = Id::WindowWidth, .category = Category::Display, .type = Type::Int, .apply = Apply::Restart, .hidden = true,
               .table = "video", .key = "window_width", .label = "Window Width",
               .description = "The window's width when the game starts.",
