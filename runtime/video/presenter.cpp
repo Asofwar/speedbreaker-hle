@@ -1592,6 +1592,10 @@ layout(set = 0, binding = 1) uniform sampler2D toneTable;
 
 vec3 toneOf(vec3 c)
 {
+    // Saturation (video/display_tone.h: the first texel's alpha, halved).
+    float saturation = textureLod(toneTable, vec2(0.5 / 256.0, 0.5), 0.0).a * 2.0;
+    if (saturation != 1.0)
+        c = mix(vec3(dot(clamp(c, 0.0, 1.0), vec3(0.2126, 0.7152, 0.0722))), c, saturation);
     vec3 t = clamp(c, 0.0, 1.0) * (255.0 / 256.0) + (0.5 / 256.0);
     return vec3(textureLod(toneTable, vec2(t.r, 0.5), 0.0).r, textureLod(toneTable, vec2(t.g, 0.5), 0.0).g,
         textureLod(toneTable, vec2(t.b, 0.5), 0.0).b);
@@ -1637,6 +1641,7 @@ void main()
             int32_t brightness = 0;
             bool ramp = false;
             uint64_t rampGeneration = 0;
+            tone::Grade grade;
         } s_tone;
 
         struct PostState
@@ -1948,15 +1953,18 @@ void main()
         {
             const int32_t brightness = std::clamp(settings::GetInt(settings::Id::Brightness), tone::kBrightnessMin, tone::kBrightnessMax);
             const bool useRamp = settings::GetBool(settings::Id::DisplayGamma);
-            if (tone::Neutral(brightness, useRamp) || !EnsureTone())
+            const tone::Grade grade{ settings::GetInt(settings::Id::Contrast), settings::GetInt(settings::Id::ColorTemperature),
+                settings::GetInt(settings::Id::Saturation) };
+            if (tone::Neutral(brightness, useRamp, grade) || !EnsureTone())
                 return false;
             const uint64_t rampGeneration = useRamp ? display_gamma::Generation() : 0;
-            if (s_tone.filled && s_tone.brightness == brightness && s_tone.ramp == useRamp && s_tone.rampGeneration == rampGeneration)
+            if (s_tone.filled && s_tone.brightness == brightness && s_tone.ramp == useRamp && s_tone.rampGeneration == rampGeneration &&
+                s_tone.grade == grade)
                 return true;
             display_gamma::Table ramp;
             const bool haveRamp = useRamp && display_gamma::Latest(ramp) != 0;
-            const tone::Lut lut = tone::BuildLut(brightness, haveRamp ? &ramp : nullptr);
-            const auto texels = tone::ToHalfTexels(lut);
+            const tone::Lut lut = tone::BuildLut(brightness, haveRamp ? &ramp : nullptr, grade);
+            const auto texels = tone::ToHalfTexels(lut, grade.saturation);
             // The frames in flight may be reading the table: rare (a setting
             // or the game's own ramp changed), so wait for them.
             WaitIdle();
@@ -1973,6 +1981,7 @@ void main()
                 brightness, !useRamp ? "off" : haveRamp ? std::format("on (the game's ramp #{})", rampGeneration).c_str() : "on (no ramp from the game yet)",
                 lut.entry[64][0] * 255.0, lut.entry[128][0] * 255.0, lut.entry[192][0] * 255.0);
             s_tone.filled = true;
+            s_tone.grade = grade;
             s_tone.brightness = brightness;
             s_tone.ramp = useRamp;
             s_tone.rampGeneration = rampGeneration;

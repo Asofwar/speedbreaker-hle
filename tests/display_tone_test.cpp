@@ -177,7 +177,27 @@ namespace
         // Every neutral entry within an eighth of a level.
         auto texels = tone::ToHalfTexels(tone::BuildLut(0, nullptr));
         for (uint32_t k = 0; k < 256; k++)
-            CHECK(std::abs(tone::FromHalf(texels[k * 4]) - k / 255.0f) * 255.0f < 0.125f && texels[k * 4 + 3] == 0x3C00, "texel %u", k);
+            CHECK(std::abs(tone::FromHalf(texels[k * 4]) - k / 255.0f) * 255.0f < 0.125f && texels[k * 4 + 3] == (k == 0 ? 0x3800 : 0x3C00),
+                "texel %u", k);  // (texel 0's alpha: Saturation 100%, halved)
+    }
+
+    // Contrast, Saturation and Color Temperature: neutral at their defaults,
+    // black and white kept by Contrast, the mid-tones spread, the gains.
+    void Grade()
+    {
+        CHECK(tone::Grade{}.Neutral() && tone::Neutral(0, false, {}), "the default grade is neutral");
+        CHECK(!tone::Neutral(0, false, { 1, 0, 100 }) && !tone::Neutral(0, false, { 0, -1, 100 }) && !tone::Neutral(0, false, { 0, 0, 90 }),
+            "any other grade is not");
+        for (int32_t s = tone::kGradeMin; s <= tone::kGradeMax; s++)
+        {
+            CHECK(tone::ApplyContrast(0.0, s) == 0.0 && tone::ApplyContrast(1.0, s) == 1.0 && std::abs(tone::ApplyContrast(0.5, s) - 0.5) < 1e-12,
+                "contrast %d keeps black, mid-grey and white", s);
+            if (s > 0)
+                CHECK(tone::ApplyContrast(0.25, s) < 0.25 && tone::ApplyContrast(0.75, s) > 0.75, "contrast %d spreads the mid-tones", s);
+        }
+        CHECK(tone::TemperatureGain(0, 2) > 1.0 && tone::TemperatureGain(2, 2) < 1.0 && tone::TemperatureGain(1, 2) == 1.0, "warmer: red up, blue down");
+        auto texels = tone::ToHalfTexels(tone::BuildLut(0, nullptr), 150);
+        CHECK(std::abs(tone::FromHalf(texels[3]) * 2.0f - 1.5f) < 1e-3f, "Saturation 150%% in texel 0's alpha: %g", tone::FromHalf(texels[3]) * 2.0f);
     }
 
     void D3dModelMatchesTheDump()
@@ -369,6 +389,7 @@ int main(int argc, char** argv)
     D3dModelMatchesTheDump();
     DecoderFollowsDirect3d();
     RampThroughTheTable();
+    Grade();
     if (argc > 1)
         PresenterShaders(argv[1]);
     else

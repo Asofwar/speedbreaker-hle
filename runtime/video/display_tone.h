@@ -55,10 +55,49 @@ namespace video::tone
         return e == 1.0 ? v : std::pow(v, e);
     }
 
-    // Nothing to apply: the presenter keeps its plain pipeline.
-    inline bool Neutral(int32_t brightness, bool useRamp)
+    // Settings > Display > Contrast, Saturation and Color Temperature, after
+    // Brightness. Contrast is an S-curve on the values (black and white
+    // stay, the mid-tones spread: each step raises its exponent by
+    // kContrastStep), Color Temperature a gain on red and the opposite on
+    // blue (kTemperatureStep a step: warmer up, cooler down), Saturation a mix
+    // with the picture's luma before the table (0: grey, 100: as it is,
+    // 200: twice as far from grey; the shader does it, the table carries the
+    // factor in its first texel's alpha, halved).
+    constexpr int32_t kGradeMin = -5, kGradeMax = 5;
+    constexpr double kContrastStep = 0.07;
+    constexpr double kTemperatureStep = 0.025;
+    constexpr int32_t kSaturationMin = 0, kSaturationMax = 200, kSaturationDefault = 100;
+
+    struct Grade
     {
-        return std::clamp(brightness, kBrightnessMin, kBrightnessMax) == 0 && !useRamp;
+        int32_t contrast = 0, temperature = 0, saturation = kSaturationDefault;
+
+        bool Neutral() const { return contrast == 0 && temperature == 0 && saturation == kSaturationDefault; }
+        bool operator==(const Grade&) const = default;
+    };
+
+    // Contrast on one value in 0..1: the curve's two halves meet at 0.5.
+    inline double ApplyContrast(double v, int32_t step)
+    {
+        v = std::clamp(v, 0.0, 1.0);
+        step = std::clamp(step, kGradeMin, kGradeMax);
+        if (step == 0)
+            return v;
+        const double e = 1.0 + kContrastStep * double(step);
+        return v < 0.5 ? 0.5 * std::pow(2.0 * v, e) : 1.0 - 0.5 * std::pow(2.0 * (1.0 - v), e);
+    }
+
+    // Color Temperature's gain on channel c (0 red, 1 green, 2 blue).
+    inline double TemperatureGain(uint32_t c, int32_t step)
+    {
+        step = std::clamp(step, kGradeMin, kGradeMax);
+        return c == 0 ? 1.0 + kTemperatureStep * step : c == 2 ? 1.0 - kTemperatureStep * step : 1.0;
+    }
+
+    // Nothing to apply: the presenter keeps its plain pipeline.
+    inline bool Neutral(int32_t brightness, bool useRamp, const Grade& grade = {})
+    {
+        return std::clamp(brightness, kBrightnessMin, kBrightnessMax) == 0 && !useRamp && grade.Neutral();
     }
 
     // out[k][c]: what framebuffer value k/255 of channel c (red, green, blue)
@@ -70,14 +109,16 @@ namespace video::tone
 
     // The table for a Brightness step and, when `ramp` is given, the 360's
     // display ramp before it.
-    inline Lut BuildLut(int32_t brightness, const display_gamma::Table* ramp)
+    inline Lut BuildLut(int32_t brightness, const display_gamma::Table* ramp, const Grade& grade = {})
     {
         Lut lut;
         for (uint32_t k = 0; k < 256; k++)
             for (uint32_t c = 0; c < 3; c++)
             {
                 double v = ramp ? ramp->entry[k][c] / 1023.0 : k / 255.0;
-                lut.entry[k][c] = float(ApplyBrightness(v, brightness));
+                v = ApplyBrightness(v, brightness);
+                v = ApplyContrast(v, grade.contrast);
+                lut.entry[k][c] = float(std::clamp(v * TemperatureGain(c, grade.temperature), 0.0, 1.0));
             }
         return lut;
     }
@@ -118,8 +159,9 @@ namespace video::tone
         return std::ldexp(1.0f + frac / 1024.0f, exp - 15);
     }
 
-    // The LUT image's texels: 256 x RGBA16F (alpha 1).
-    inline std::array<uint16_t, 256 * 4> ToHalfTexels(const Lut& lut)
+    // The LUT image's texels: 256 x RGBA16F (alpha 1, but the first's: half
+    // of Saturation as a factor, 0.5 at 100%).
+    inline std::array<uint16_t, 256 * 4> ToHalfTexels(const Lut& lut, int32_t saturation = kSaturationDefault)
     {
         std::array<uint16_t, 256 * 4> texels{};
         for (uint32_t k = 0; k < 256; k++)
@@ -128,6 +170,7 @@ namespace video::tone
                 texels[k * 4 + c] = ToHalf(lut.entry[k][c]);
             texels[k * 4 + 3] = ToHalf(1.0f);
         }
+        texels[3] = ToHalf(float(std::clamp(saturation, kSaturationMin, kSaturationMax)) / 200.0f);
         return texels;
     }
 
