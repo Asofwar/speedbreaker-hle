@@ -58,8 +58,11 @@ uint32_t XamContentGetCreator(uint32_t userIndex, const XCONTENT_DATA* contentDa
     if (isCreator)
         *isCreator = true;
 
+    // The signed-in profile's (kernel/xam.h): with online play its XUID comes
+    // from the gamertag, and saves made offline (by "Player") must still read
+    // as its own, not another profile's.
     if (xuid)
-        *xuid = 0xB13EBABEBABEBABE;
+        *xuid = XamXuid();
 
     return 0;
 }
@@ -75,7 +78,7 @@ uint32_t XamUserGetSigninInfo(uint32_t userIndex, uint32_t flags, XUSER_SIGNIN_I
     {
         memset(info, 0, sizeof(*info));
         info->xuid = XamXuid();
-        info->SigninState = 1;
+        info->SigninState = online::Enabled() ? 2 : 1;  // as XamUserGetSigninState says
         snprintf(info->Name, sizeof(info->Name), "%s", XamGamertag());
         return 0;
     }
