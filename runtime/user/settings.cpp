@@ -244,7 +244,7 @@ namespace settings
             // game's command buffers are sized for it when its device is made.
             { .id = Id::SmoothMotion, .category = Category::Display, .type = Type::Bool, .apply = Apply::Restart,
               .table = "video", .key = "smooth_motion", .label = "Smooth Motion",
-              .description = "Up to 120 fps on a 120 Hz screen (ProMotion): the game still runs at 60 steps a second, and a picture between each two is drawn from the poses either side. A little more delay and power. Heavy scenes drop to an even 60 for a while; off at 30 fps.",
+              .description = "Up to 120, 180 or 240 fps on a screen at that rate (a Mac's ProMotion, or a 120-240 Hz monitor): the game still runs at 60 steps a second, and the pictures between each two are drawn from the poses either side. A little more delay and power. Heavy scenes drop to an even 60 for a while; off at 30 fps.",
               .env = "NFSMW_HFR", .defaultValue = 0 },
             { .id = Id::PresentScale, .category = Category::Display, .type = Type::Enum, .apply = Apply::Live, .hidden = kPresentScaleHidden,
               .table = "video", .key = "present_scale", .label = "Screen Resolution",

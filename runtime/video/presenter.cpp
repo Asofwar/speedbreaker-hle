@@ -578,8 +578,8 @@ namespace video
         int64_t s_hfrLastDesired = 0;
         constexpr int64_t kHfrMinGapNs = 4'000'000;  // between two pictures asked for (order kept, never at once)
         float s_displayHz = 0.0f;  // the display mode's, for the log (main thread)
-        std::atomic<float> s_offeredHz{ 0.0f };  // the same, for HfrOffered (any thread)
 #endif
+        std::atomic<float> s_offeredHz{ 0.0f };  // the display mode's rate, for HfrOffered (any thread)
         // NFSMW_VBLANK_LOG's <file>.actual.csv: the driver's own on-screen
         // time per present (Metal's presentedTime, mach_absolute_time ns, 0:
         // never shown; the first line gives the steady clock against it). The
@@ -3394,9 +3394,10 @@ void main()
         void UpdateDisplayItem()
         {
             const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(s_window));
+            // (HfrOffered, everywhere: the screen's rate.)
+            s_offeredHz.store(mode ? mode->refresh_rate : 0.0f, std::memory_order_relaxed);
 #if defined(__APPLE__) && !TARGET_OS_IOS
             s_displayHz = mode ? mode->refresh_rate : 0.0f;
-            s_offeredHz.store(s_displayHz, std::memory_order_relaxed);
             {
                 std::lock_guard lock(s_scheduleMutex);
                 s_schedule.SetDisplayHz(s_displayHz);
@@ -5194,7 +5195,18 @@ void main()
         // shows the game at 60).
         const float hz = s_offeredHz.load(std::memory_order_relaxed);
         return s_displayTiming && hz >= PresentSchedule::kMinFastHz && hz <= PresentSchedule::kMaxFastHz;
+#elif defined(__APPLE__) && TARGET_OS_IOS
+        return false;
 #else
+        // Windows, Linux and SteamOS: a screen at 2, 3 or 4 times 60 Hz (120,
+        // 180, 240), where the guest vblank locks to every 2nd to 4th refresh
+        // and new frames are held for their refresh (HfrPicturesPerStep).
+        // Tested at 240 Hz on Windows (an RTX 5080: three in-between
+        // pictures a step once the lock settles).
+        const float hz = s_offeredHz.load(std::memory_order_relaxed);
+        for (int multiple = 2; multiple <= 4; multiple++)
+            if (std::fabs(hz - 60.0f * float(multiple)) <= 1.5f * float(multiple))
+                return true;
         return false;
 #endif
     }

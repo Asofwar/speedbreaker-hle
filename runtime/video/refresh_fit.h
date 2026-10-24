@@ -76,7 +76,15 @@ namespace video
         // `multiple` times that.
         static constexpr double kMinHz = 58.5, kMaxHz = 61.5;
         static constexpr int kMaxMultiple = 4;  // 240 Hz
+#ifdef _WIN32
+        // Windows' present times (VK_KHR_present_wait, then the presenter's
+        // thread waking) scatter by 0.5 ms on their own: an RTX 5080 at
+        // 240 Hz fitted 0.50-0.51 ms, and the lock came and went at a 0.5 ms
+        // limit. A refresh there is 4.2 ms.
+        static constexpr double kMaxRmsNs = 1'000'000;    // 1 ms
+#else
         static constexpr double kMaxRmsNs = 500'000;      // 0.5 ms
+#endif
         static constexpr double kMinSpanNs = 10e9;        // 10 s
         static constexpr double kMaxRejected = 0.1;       // of the window
 
