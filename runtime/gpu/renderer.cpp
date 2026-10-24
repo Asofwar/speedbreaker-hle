@@ -24,6 +24,7 @@
 
 #include <kernel/vmem.h>
 #include <kernel/write_watch.h>
+#include <report/report.h>
 #include <video/presenter.h>
 #include <video/picture_fit.h>
 #include <video/scale_budget.h>
@@ -46,11 +47,78 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <memory>
 #include <unordered_map>
+
+// swapWord(v, e) in the compute shaders: a guest word in Xenos endianness e
+// (0 none, 1 8in16, 2 8in32, 3 16in32; the resolve's 4 and up: 8in32) as a
+// host uint. On Windows as selects, like the vertex and pixel shaders'
+// gpuSwap (shader_translator.cpp): Intel's Windows driver compiled the
+// early-return chain wrongly. In the compute shaders it showed in races: a
+// black starburst over the middle of the picture. Elsewhere as before.
+// The select forms equal the chains for every e (the plain swapWord leaves
+// 4 and up unswapped, as its chain does).
+//
+// The same shape elsewhere in the compute shaders gets the same treatment
+// on Windows, whether or not it has shown yet: the resolve's bppLog2 (a run
+// of early returns) and the front image's swap (an else-if chain on
+// p.endian). Intel's 101.2135 merged one branch's value into the default;
+// nothing here shows whether it does so for any other chain.
+#ifdef _WIN32
+#define GLSL_SWAP_WORD R"(uint swapWord(uint v, uint e)
+{
+    uint s8 = ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
+    v = (e == 1u || e == 2u) ? s8 : v;
+    return (e == 2u || e == 3u) ? (v >> 16) | (v << 16) : v;
+})"
+#define GLSL_SWAP_WORD_RESOLVE R"(uint swapWord(uint v, uint e)
+{
+    uint s8 = ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
+    v = (e == 1u || e == 2u || e >= 4u) ? s8 : v;
+    return e >= 2u ? (v >> 16) | (v << 16) : v;
+})"
+#define GLSL_BPP_LOG2 R"(uint bppLog2(uint f)
+{
+    uint b = (f == 26u || f == 32u || f == 34u || f == 37u) ? 3u : 2u;   // 64, else 32
+    b = (f == 3u || f == 4u || f == 10u || f == 15u || f == 24u || f == 30u) ? 1u : b;
+    return f == 2u ? 0u : b;                                             // 8
+})"
+#define GLSL_FRONT_SWAP R"(    uint s8 = ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
+    v = (p.endian == 1u || p.endian == 2u) ? s8 : v;
+    v = (p.endian == 2u || p.endian == 3u) ? (v >> 16) | (v << 16) : v;)"
+#else
+#define GLSL_BPP_LOG2 R"(uint bppLog2(uint f)
+{
+    if (f == 2u) return 0u;                                  // 8
+    if (f == 3u || f == 4u || f == 10u || f == 15u || f == 24u || f == 30u) return 1u;
+    if (f == 26u || f == 32u || f == 34u || f == 37u) return 3u;
+    return 2u;
+})"
+#define GLSL_FRONT_SWAP R"(    if (p.endian == 1u) v = ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
+    else if (p.endian == 2u) v = (v << 24) | ((v << 8) & 0x00FF0000u) | ((v >> 8) & 0x0000FF00u) | (v >> 24);
+    else if (p.endian == 3u) v = (v >> 16) | (v << 16);)"
+#define GLSL_SWAP_WORD R"(uint swapWord(uint v, uint e)
+{
+    if (e == 1u) return ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
+    if (e == 2u) return (v << 24) | ((v << 8) & 0x00FF0000u) | ((v >> 8) & 0x0000FF00u) | (v >> 24);
+    if (e == 3u) return (v >> 16) | (v << 16);
+    return v;
+})"
+#define GLSL_SWAP_WORD_RESOLVE R"(uint swapWord(uint v, uint e)
+{
+    if (e == 1u) return ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
+    if (e == 2u || e >= 4u) return (v << 24) | ((v << 8) & 0x00FF0000u) | ((v >> 8) & 0x0000FF00u) | (v >> 24);
+    if (e == 3u) return (v >> 16) | (v << 16);
+    return v;
+})"
+#endif
 
 namespace gpu::renderer
 {
@@ -76,7 +144,16 @@ namespace gpu::renderer
         // Lighter passes (NFSMW_UNTILED_AREA, NFSMW_PASS_BARRIER): Apple only.
         // On the Frame the smaller area cost +0.3 ms (Turnip chooses tiled
         // or direct rendering by the area) and the barrier changed nothing.
-        // Each variable overrides.
+        // Windows: both on an Intel integrated GPU, chosen by the device in
+        // Initialize (PassDefaultsForDevice), but for the pass barrier (see
+        // s_passBarrierLevel: the untiled area alone there). On a UHD 620
+        // (Intel's driver), GPU-bound at ~20 fps in a race at 1x: lighter
+        // +1.15 fps (3 of 3 runs; the barrier's share of it measured later at
+        // ~0.1), fewer +0.55 (+0.10 to +0.81), together with occlusion
+        // counting +1.8 (-4.0 ms GPU); no artifact seen in the parked race's
+        // captures (by eye: they aren't the same game frame). AMD's APUs
+        // and discrete GPUs there are unmeasured: off. Each variable
+        // overrides.
 #if defined(__APPLE__) || (defined(__linux__) && defined(__aarch64__))
         constexpr bool kFewerPasses = true;
 #else
@@ -86,6 +163,14 @@ namespace gpu::renderer
         constexpr bool kLighterPasses = true;
 #else
         constexpr bool kLighterPasses = false;
+#endif
+        // What follows kFewerPasses and kLighterPasses: constants of the
+        // build, but on Windows PassDefaultsForDevice sets them once, before
+        // the first frame, where their variables are unset.
+#ifdef _WIN32
+#define PASS_CONST
+#else
+#define PASS_CONST const
 #endif
 
         // Where a frame's time went, for hitch reports (renderer::HitchReport).
@@ -617,6 +702,14 @@ namespace gpu::renderer
             // here, harvested at completion, then the END reports, in order.
             std::vector<ZpdSegment> zpdSegments;
             std::vector<ZpdEnd> zpdEnds;
+#ifdef _WIN32
+            // NFSMW_BLACK_CHECK=1: the present whose front image this
+            // submission probes (its entry in s_black.host, else -1).
+            int32_t blackEntry = -1;
+            uint64_t blackFrame = 0;
+            double blackSec = 0;
+            uint32_t blackDraws = 0, blackWaiting = 0, blackResolves = 0;  // the game's work for that frame
+#endif
         };
         // NFSMW_FENCE_EVENTS=0 disables mid-buffer fence publication.
         const bool s_fenceEvents = [] { const char* v = std::getenv("NFSMW_FENCE_EVENTS"); return !v || v[0] != '0'; }();
@@ -970,6 +1063,66 @@ namespace gpu::renderer
                 (unsigned long long)raw, count, ms, lost ? std::format(" ({} segments lost)", lost).c_str() : "");
         }
 
+#ifdef _WIN32
+        // NFSMW_BLACK_CHECK=1: a black-frame count over every present, not a
+        // capture now and then (P3's black frames came from Intel's driver
+        // and hit a third of all frames; captures cost ~0.5 s each here).
+        // After each present's front image is written a compute pass counts
+        // its texels with any red, green or blue (RecordBlackProbe); the
+        // completion thread reads the count once that submission is done and
+        // logs every present whose front image is all zero, with a summary
+        // every 600 presents. The game's own cuts to black count too (the
+        // intro cinematic has some). Each line gives the frame, the time and
+        // the game's work for that frame (draws since the last present, how
+        // many waited for a pipeline still compiling, resolves): a cut the
+        // game makes has the same counts on the Mac at the same point, while
+        // a high draw count alone proves nothing (a fade from black draws the
+        // whole scene under it). Only whole black frames are seen, not a pass
+        // missing under the HUD.
+        struct BlackCheck
+        {
+            bool on = false;
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VkDeviceMemory memory = VK_NULL_HANDLE;
+            const volatile uint32_t* host = nullptr;
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout layout = VK_NULL_HANDLE;
+            VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+            std::chrono::steady_clock::time_point start;
+            uint32_t next = 0;  // command processor
+            uint64_t drawsAt = 0, resolvesAt = 0;  // command processor: at the last present
+            uint64_t presents = 0, black = 0, windowBlack = 0, logged = 0;  // completion thread
+        };
+        BlackCheck s_black;
+        // Entries are reused in turn. One outlives its submission: more
+        // entries than slots, and a slot's next recording waits for its last
+        // submission to be retired, harvest included.
+        constexpr uint32_t kBlackEntries = 4 * kSlots;
+
+        // Completion thread: `sub` (which carries a probe) is done.
+        void BlackHarvest(Submission& sub)
+        {
+            uint32_t lit = s_black.host[sub.blackEntry];
+            s_black.presents++;
+            if (lit == 0)
+            {
+                s_black.black++;
+                s_black.windowBlack++;
+                if (s_black.logged++ < 2000)
+                    fprintf(stderr, "[black] frame %llu, %.2f s: the front image is all zero; the game's frame: %u draws (%u waiting for a "
+                        "pipeline), %u resolves\n", (unsigned long long)sub.blackFrame, sub.blackSec, sub.blackDraws, sub.blackWaiting,
+                        sub.blackResolves);
+            }
+            if (s_black.presents % 600 == 0)
+            {
+                fprintf(stderr, "[black] %llu of the last 600 presents black, %llu of %llu since the first\n",
+                    (unsigned long long)s_black.windowBlack, (unsigned long long)s_black.black, (unsigned long long)s_black.presents);
+                s_black.windowBlack = 0;
+            }
+            sub.blackEntry = -1;
+        }
+#endif
+
         void CompletionThread()
         {
 #ifdef __APPLE__
@@ -1068,6 +1221,10 @@ namespace gpu::renderer
                 }
                 if (!sub.zpdSegments.empty())
                     ZpdHarvest(slot, sub);
+#ifdef _WIN32
+                if (sub.blackEntry >= 0)
+                    BlackHarvest(sub);
+#endif
                 {
                     // Writes run under the lock so QueueWrite can't append to
                     // a submission that is being retired.
@@ -1160,7 +1317,18 @@ namespace gpu::renderer
         // [perf] window, off in the rest: one run, the same content in both
         // arms. Each window's [barrier] line names the level it ran at.
         // Default 2 with kLighterPasses (Apple: iPad Pro M2 GPU-bound at 2x,
-        // same-run windows: executing -0.5 ms), else 0.
+        // same-run windows: executing -0.5 ms), else 0. Windows on an Intel
+        // integrated GPU keeps 0 with the rest of the lighter passes: on a UHD
+        // 620, GPU-bound at ~23 fps in a race, level 2 against 0 in the same
+        // runs (the ALT above, 15 race window pairs in 2 runs) was -0.10 ms
+        // of GPU busy (median -0.30), within noise; and no scene on any
+        // device has needed a vertex barrier, so the validation layer has
+        // never seen the path that keeps level 2 safe where a vertex shader
+        // reads what a resolve wrote. Rechecked with Windows' Best
+        // performance power mode (the chip at ~25 W, ~27 fps in the race):
+        // the ALT's 18 race window pairs -0.04 ms, and in whole runs (2
+        // against 2) level 2 was no faster (race -1.3 fps, cinematic -0.5,
+        // inside that mode's run-to-run spread of about 1 fps).
         const uint32_t s_passBarrierLevel = [] { const char* v = std::getenv("NFSMW_PASS_BARRIER"); return v ? uint32_t(std::clamp(std::atoi(v), 0, 3)) : kLighterPasses ? 2u : 0u; }();
         const bool s_passBarrierAlt = [] { const char* v = std::getenv("NFSMW_PASS_BARRIER_ALT"); return v && v[0] == '1'; }() && s_passBarrierLevel;
         uint32_t s_passBarrier = s_passBarrierAlt ? 0u : s_passBarrierLevel;
@@ -1475,7 +1643,7 @@ namespace gpu::renderer
             if (!s_shaderCacheEnabled)
                 return CompileGlslUncached(source, stage, log, preamble);
             std::filesystem::path file = ShaderCacheFile(source, stage, preamble);
-            if (FILE* f = fopen(file.c_str(), "rb"))
+            if (FILE* f = fopen(file.string().c_str(), "rb"))
             {
                 std::vector<uint32_t> spirv;
                 fseek(f, 0, SEEK_END);
@@ -1502,7 +1670,7 @@ namespace gpu::renderer
                 // Unique per thread: two workers may compile the same source.
                 std::filesystem::path temp = file;
                 temp += std::format(".{}.tmp", std::hash<std::thread::id>{}(std::this_thread::get_id()));
-                if (FILE* f = fopen(temp.c_str(), "wb"))
+                if (FILE* f = fopen(temp.string().c_str(), "wb"))
                 {
                     bool ok = fwrite(spirv.data(), 4, spirv.size(), f) == spirv.size();
                     ok = fclose(f) == 0 && ok;
@@ -1567,7 +1735,7 @@ namespace gpu::renderer
         {
             std::vector<uint8_t> data;
             if (s_shaderCacheEnabled)
-                if (FILE* f = fopen((GetCachePath() / "pipelines.bin").c_str(), "rb"))
+                if (FILE* f = fopen((GetCachePath() / "pipelines.bin").string().c_str(), "rb"))
                 {
                     fseek(f, 0, SEEK_END);
                     long size = ftell(f);
@@ -1641,7 +1809,7 @@ namespace gpu::renderer
             std::filesystem::create_directories(GetCachePath(), ec);
             std::filesystem::path file = GetCachePath() / "pipelines.bin", temp = file;
             temp += ".tmp";
-            if (FILE* f = fopen(temp.c_str(), "wb"))
+            if (FILE* f = fopen(temp.string().c_str(), "wb"))
             {
                 bool ok = fwrite(data.data(), 1, size, f) == size;
                 ok = fclose(f) == 0 && ok;
@@ -1716,6 +1884,25 @@ namespace gpu::renderer
         VkDescriptorSetLayout s_set0Layout = VK_NULL_HANDLE;
         VkDescriptorPool s_descriptorPool = VK_NULL_HANDLE;
         VkDescriptorSet s_set0 = VK_NULL_HANDLE;
+#ifdef _WIN32
+        // Intel's Windows driver (UHD 620, 101.2135) reads zeros through a
+        // dynamic uniform or storage buffer descriptor wherever the dynamic
+        // offset plus the read's place in the range reaches 128 MB (2^27);
+        // a descriptor whose own offset is that far in reads right (P3's
+        // uborepro). The draws' constants are a dynamic uniform buffer in
+        // the 192 MB upload ring: draws whose constants landed in slots 8-11
+        // read zeros, their vertices collapsed to w = 0, and every primitive
+        // was clipped. A third of all frames were black (the title, menus,
+        // races) or lost whole passes (a black world under the HUD). Here
+        // set 0 is one set per ring slot with the constants at the slot's
+        // start, so the dynamic offset is the offset in the slot (under 16
+        // MB). Elsewhere one set, as before. NFSMW_SLOT_SETS=0 binds the one
+        // set instead (to see whether a newer driver still has the bug:
+        // NFSMW_BLACK_CHECK=1 counts the black frames it brings back).
+        VkDescriptorPool s_slotDescriptorPool = VK_NULL_HANDLE;
+        VkDescriptorSet s_slotSet0[kSlots] = {};
+        bool s_slotSets = true;
+#endif
         VkSampler s_sampler = VK_NULL_HANDLE;
         Image s_dummy[3];  // 2D, 3D, cube: until the texture cache (M4)
         Image s_dummyStorage;  // R32_UINT 1x1: a resolve's texture binding when it stores into none
@@ -1876,7 +2063,7 @@ namespace gpu::renderer
         // and each shader pair keeping the whole target, once.
         // On by default with kLighterPasses (Apple: iPad Pro M2 GPU-bound at
         // 2x, same-run windows: executing -1.0 ms), else off; =0 turns it off.
-        const uint32_t s_untiledArea = [] {
+        PASS_CONST uint32_t s_untiledArea = [] {
             const char* v = std::getenv("NFSMW_UNTILED_AREA");
             return !v ? (kLighterPasses ? 1u : 0u) : v[0] == '1' ? 1u : strcmp(v, "alt") == 0 ? 2u : 0u;
         }();
@@ -2001,6 +2188,14 @@ namespace gpu::renderer
             // Settings > Video > Internal Resolution; NFSMW_RENDER_SCALE
             // (<n> or <sx>x<sy>, developer override) wins.
             s_scaleBudget = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 6 : 4;
+#ifdef _WIN32
+            // An Intel integrated GPU on Windows renders at 1x, as iOS does:
+            // a UHD 620 runs a race at 1x at ~20 fps, GPU-bound, and Auto
+            // would pick 2x2 for a maximized window or a 1080p screen
+            // (presenter.cpp, IntegratedGpuDefaults).
+            if (s_vk->integratedGpuDefaults)
+                s_scaleBudget = 1;
+#endif
 #if defined(__APPLE__) && TARGET_OS_IOS
             // iPhones and iPads: chip by chip (video/scale_budget), more than
             // 1x1 only where a chip was measured to hold a race at 60 fps with
@@ -2072,6 +2267,29 @@ namespace gpu::renderer
         struct RecentTarget { uint64_t key = ~0ull; RenderTarget* target = nullptr; };
         RecentTarget s_recentTargets[16];
 
+#ifdef _WIN32
+        // EDRAM is one memory: a depth target the game first uses at a base
+        // where it drew with another layout holds, on the console, what that
+        // EDRAM was last cleared to (the game clears depth as it resolves).
+        // The race's first frame does this (depth at base 1312 with pitch
+        // 1280, after pitch 640 with 2x MSAA in the cinematic) and draws with
+        // LEQUAL before any clear of its own: from zero every draw failed and
+        // the frame was black (P3: in every laptop run where that target was
+        // first made at the race start, and whenever it was made anew there
+        // on purpose). So a new depth target starts from the last depth clear
+        // at its base (ClearRect records it), or from zero where there was
+        // none, as before. Limits: the same base only (other overlapping
+        // layouts aren't modelled), and a new target only: one that exists
+        // keeps its own contents after another layout's newer clear at its
+        // base. Every such reuse the review counted (drive and long scripts)
+        // found the target's own last clear, the same 1.0, nothing drawn
+        // since. Windows only for now, though the cause is this renderer, not
+        // a driver: Linux (same pass defaults) can hit it whenever its timing
+        // makes that target at the race start. No Mac run made it there: with
+        // the Mac's defaults it was never made, with Windows defaults in the
+        // cut before the cinematic or not at all.
+        std::unordered_map<uint32_t, VkClearDepthStencilValue> s_lastDepthClear;
+#endif
         // A new target, at the current scale if its pitch is a scaled one,
         // cleared to zero (new EDRAM contents).
         std::unique_ptr<RenderTarget> CreateTarget(uint32_t base, uint32_t format, bool depth, uint32_t pitch, bool wide)
@@ -2126,6 +2344,14 @@ namespace gpu::renderer
             if (depth)
             {
                 VkClearDepthStencilValue v{ 0.0f, 0 };
+#ifdef _WIN32
+                if (auto it = s_lastDepthClear.find(base); it != s_lastDepthClear.end())
+                {
+                    v = it->second;
+                    fprintf(stderr, "[renderer] EDRAM target at base %u (pitch %u) starts at the depth last cleared there: %g, stencil %u\n", base,
+                        pitch, v.depth, v.stencil);
+                }
+#endif
                 vkCmdClearDepthStencilImage(s_cmd, rt->image.image, VK_IMAGE_LAYOUT_GENERAL, &v, 1, &range);
             }
             else
@@ -2179,7 +2405,7 @@ namespace gpu::renderer
         // view's pass in three: 10 of the 46 passes of an iPad race frame's
         // profile. Expected ~0.4-0.5 ms of its GPU time (bit 1 ~0.2, bit 2
         // ~0.15-0.25: the glow and flare draws still run).
-        const uint32_t s_passMerge = [] { const char* v = std::getenv("NFSMW_PASS_MERGE"); return v ? uint32_t(std::atoi(v)) : kFewerPasses ? 3u : 0u; }();
+        PASS_CONST uint32_t s_passMerge = [] { const char* v = std::getenv("NFSMW_PASS_MERGE"); return v ? uint32_t(std::atoi(v)) : kFewerPasses ? 3u : 0u; }();
 
         void EndPass()
         {
@@ -2278,7 +2504,7 @@ namespace gpu::renderer
         // tile bands, ~0.2-0.3 ms of the iPad's GPU time. The clears kept
         // wait for the next pass on their target, which must hold them
         // (BeginPass logs one that reaches past its pass).
-        const bool s_clearFlushRect = [] { const char* v = std::getenv("NFSMW_CLEAR_FLUSH_RECT"); return v ? v[0] == '1' : kFewerPasses; }();
+        PASS_CONST bool s_clearFlushRect = [] { const char* v = std::getenv("NFSMW_CLEAR_FLUSH_RECT"); return v ? v[0] == '1' : kFewerPasses; }();
 
         void BeginPass(RenderTarget* const color[4], RenderTarget* depth, VkRect2D area)
         {
@@ -2834,6 +3060,9 @@ namespace gpu::renderer
                 auto build = [job, key, layout, vs, ps] {
                     auto start = std::chrono::steady_clock::now();
                     VkPipeline pipeline = BuildPipeline(key, layout, *vs, *ps);
+                    // Progress for the hang watchdog: a cold cache's compiles
+                    // can hold a frame for 20 s on a slow driver (Windows).
+                    report::g_pipelinesBuilt.fetch_add(1, std::memory_order_relaxed);
                     {
                         std::lock_guard lock(job->mutex);
                         job->pipeline = pipeline;
@@ -3573,13 +3802,7 @@ uint tiled2D(uint x, uint y, uint pitch, uint bppLog2)
         (((oi >> 5) & 7u) << 8) | ((oi >> 8) << 12);
 }
 
-uint swapWord(uint v, uint e)
-{
-    if (e == 1u) return ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
-    if (e == 2u) return (v << 24) | ((v << 8) & 0x00FF0000u) | ((v >> 8) & 0x0000FF00u) | (v >> 24);
-    if (e == 3u) return (v >> 16) | (v << 16);
-    return v;
-}
+)" GLSL_SWAP_WORD R"(
 
 uint addr(uint bx, uint by)
 {
@@ -3667,7 +3890,7 @@ void main()
         // untiles, six copies and a split render pass a frame (two in heavy
         // scenes). A device that turns the image or a view down keeps the
         // staging path for that format.
-        const bool s_directCube = [] { const char* v = std::getenv("NFSMW_DIRECT_CUBE"); return v ? v[0] == '1' : kFewerPasses; }();
+        PASS_CONST bool s_directCube = [] { const char* v = std::getenv("NFSMW_DIRECT_CUBE"); return v ? v[0] == '1' : kFewerPasses; }();
         // fi.vk -> a storable R32_UINT view is allowed (2D; cube compatible, with six layers)
         std::unordered_map<VkFormat, bool> s_directFormats, s_directCubeFormats;
 
@@ -3803,7 +4026,7 @@ void main()
         // (1280x720) are each resolved in three strips, a predicated tile
         // each, and were untiled again between passes every frame (3.7 MB
         // each), on every platform.
-        const bool s_fusePartial = [] { const char* v = std::getenv("NFSMW_FUSE_PARTIAL"); return v ? v[0] == '1' : kFewerPasses; }();
+        PASS_CONST bool s_fusePartial = [] { const char* v = std::getenv("NFSMW_FUSE_PARTIAL"); return v ? v[0] == '1' : kFewerPasses; }();
         // Direct textures by their first guest byte (the latest made there),
         // for resolves into part of one (Resolve): every one with
         // NFSMW_FUSE_PARTIAL, the cubes with NFSMW_DIRECT_CUBE alone; and the
@@ -4817,7 +5040,7 @@ void main()
         // The constants pushed to the resolve shader: without NFSMW_FUSE_PARTIAL
         // and NFSMW_DIRECT_CUBE, those before texX, as before them, and the
         // shader is built without TEX_OFFSET (the same code and push).
-        const uint32_t s_resolvePush = s_fusePartial || s_directCube ? offsetof(ResolveConstants, hostWrite) : offsetof(ResolveConstants, texX);
+        PASS_CONST uint32_t s_resolvePush = s_fusePartial || s_directCube ? offsetof(ResolveConstants, hostWrite) : offsetof(ResolveConstants, texX);
 
         const char* kResolveGlsl = R"(#version 460
 #extension GL_EXT_samplerless_texture_functions : require
@@ -4900,21 +5123,9 @@ uint tiled2D(uint x, uint y, uint pitch, uint bppLog2)
         (((oi >> 5) & 7u) << 8) | ((oi >> 8) << 12);
 }
 
-uint swapWord(uint v, uint e)
-{
-    if (e == 1u) return ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
-    if (e == 2u || e >= 4u) return (v << 24) | ((v << 8) & 0x00FF0000u) | ((v >> 8) & 0x0000FF00u) | (v >> 24);
-    if (e == 3u) return (v >> 16) | (v << 16);
-    return v;
-}
+)" GLSL_SWAP_WORD_RESOLVE R"(
 
-uint bppLog2(uint f)
-{
-    if (f == 2u) return 0u;                                  // 8
-    if (f == 3u || f == 4u || f == 10u || f == 15u || f == 24u || f == 30u) return 1u;
-    if (f == 26u || f == 32u || f == 34u || f == 37u) return 3u;
-    return 2u;
-}
+)" GLSL_BPP_LOG2 R"(
 
 // px() at 1.5x (a den of 2): the host pixels the guest pixel covers, each
 // weighted by how much of it lies inside (gpu/render_scale.h's box filter:
@@ -5263,6 +5474,9 @@ void main()
                     depth = float(v >> 8) / 16777215.0f;
                 }
                 ca.clearValue.depthStencil = { std::clamp(depth, 0.0f, 1.0f), v & 0xFF };
+#ifdef _WIN32
+                s_lastDepthClear[rt->base] = ca.clearValue.depthStencil;  // (see s_lastDepthClear)
+#endif
             }
             else
             {
@@ -6263,13 +6477,7 @@ uint tiled2D(uint x, uint y, uint pitch, uint bppLog2)
         (((oi >> 5) & 7u) << 8) | ((oi >> 8) << 12);
 }
 
-uint swapWord(uint v, uint e)
-{
-    if (e == 1u) return ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
-    if (e == 2u) return (v << 24) | ((v << 8) & 0x00FF0000u) | ((v >> 8) & 0x0000FF00u) | (v >> 24);
-    if (e == 3u) return (v >> 16) | (v << 16);
-    return v;
-}
+)" GLSL_SWAP_WORD R"(
 
 void main()
 {
@@ -6703,9 +6911,7 @@ void main()
         uint addr = p.base + (p.tiled != 0u ? tiled2D(g.x, g.y, p.pitch, 2u) : (g.y * p.pitch + g.x) * 4u);
         v = memLoad((addr & 0x1FFFFFFFu) >> 2);
     }
-    if (p.endian == 1u) v = ((v << 8) & 0xFF00FF00u) | ((v >> 8) & 0x00FF00FFu);
-    else if (p.endian == 2u) v = (v << 24) | ((v << 8) & 0x00FF0000u) | ((v >> 8) & 0x0000FF00u) | (v >> 24);
-    else if (p.endian == 3u) v = (v >> 16) | (v << 16);
+)" GLSL_FRONT_SWAP R"(
     float c[6];
     if (p.format == 7u || p.format == 54u)
     {
@@ -6753,6 +6959,93 @@ void main()
             DestroyImage(front);
             width = height = 0;
         }
+
+#ifdef _WIN32
+        // (See BlackCheck.) Per 8x8 group, then one atomic add per group that
+        // saw any light.
+        const char* kBlackProbeGlsl = R"(#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba8) readonly uniform image2D frontImage;
+layout(std430, set = 0, binding = 1) buffer Lit { uint lit[]; };
+layout(push_constant) uniform P { uint width, height, entry; } p;
+shared uint s_lit;
+void main()
+{
+    if (gl_LocalInvocationIndex == 0u) s_lit = 0u;
+    barrier();
+    uvec2 g = gl_GlobalInvocationID.xy;
+    if (g.x < p.width && g.y < p.height && any(greaterThan(imageLoad(frontImage, ivec2(g)).rgb, vec3(0.0))))
+        atomicAdd(s_lit, 1u);
+    barrier();
+    if (gl_LocalInvocationIndex == 0u && s_lit != 0u)
+        atomicAdd(lit[p.entry], s_lit);
+}
+)";
+
+        void CreateBlackCheck()
+        {
+            const char* v = std::getenv("NFSMW_BLACK_CHECK");
+            if (!v || v[0] != '1')
+                return;
+            VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+            bci.size = kBlackEntries * sizeof(uint32_t);
+            bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            Check(vkCreateBuffer(s_dev, &bci, nullptr, &s_black.buffer), "vkCreateBuffer(black check)");
+            VkMemoryRequirements req;
+            vkGetBufferMemoryRequirements(s_dev, s_black.buffer, &req);
+            VkMemoryAllocateInfo mai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+            mai.allocationSize = req.size;
+            mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            Check(vkAllocateMemory(s_dev, &mai, nullptr, &s_black.memory), "vkAllocateMemory(black check)");
+            vkBindBufferMemory(s_dev, s_black.buffer, s_black.memory, 0);
+            void* p;
+            Check(vkMapMemory(s_dev, s_black.memory, 0, VK_WHOLE_SIZE, 0, &p), "vkMapMemory(black check)");
+            s_black.host = static_cast<const volatile uint32_t*>(p);
+            VkDescriptorSetLayoutBinding b[2] = {
+                { 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr },
+                { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr },
+            };
+            CreateComputePipeline(kBlackProbeGlsl, b, 2, 3 * sizeof(uint32_t), s_black.setLayout, s_black.layout, s_black.pipeline);
+            s_black.start = std::chrono::steady_clock::now();
+            s_black.on = true;
+            fprintf(stderr, "[black] NFSMW_BLACK_CHECK: every present's front image is checked; an all-zero one is logged as [black]\n");
+        }
+
+        // After the front pass wrote `front` (and a full barrier), before the
+        // present's submit: count its lit texels into the next entry.
+        void RecordBlackProbe(const Image& front, uint32_t width, uint32_t height)
+        {
+            uint32_t entry = s_black.next++ % kBlackEntries;
+            vkCmdFillBuffer(s_cmd, s_black.buffer, VkDeviceSize(entry) * sizeof(uint32_t), sizeof(uint32_t), 0);
+            VkMemoryBarrier mb{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT };
+            vkCmdPipelineBarrier(s_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+            VkDescriptorImageInfo ii{ VK_NULL_HANDLE, front.view, VK_IMAGE_LAYOUT_GENERAL };
+            VkDescriptorBufferInfo bi{ s_black.buffer, 0, VK_WHOLE_SIZE };
+            VkWriteDescriptorSet w[2] = {
+                { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, 0, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &ii, nullptr, nullptr },
+                { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &bi, nullptr },
+            };
+            uint32_t pc[3] = { width, height, entry };
+            s_stateEpoch++;
+            vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_black.pipeline);
+            s_pushDescriptorSet(s_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_black.layout, 0, 2, w);
+            vkCmdPushConstants(s_cmd, s_black.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), pc);
+            vkCmdDispatch(s_cmd, (width + 7) / 8, (height + 7) / 8, 1);
+            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            vkCmdPipelineBarrier(s_cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+            Submission& sub = s_submissions[s_slot];
+            sub.blackEntry = int32_t(entry);
+            sub.blackFrame = s_frame;
+            sub.blackSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_black.start).count();
+            sub.blackDraws = uint32_t(s_stats.draws - s_black.drawsAt);
+            sub.blackWaiting = s_pipelineSkips;  // (this frame's: OnSwap, which resets it, comes after the present)
+            sub.blackResolves = uint32_t(s_stats.resolves - s_black.resolvesAt);
+            s_black.drawsAt = s_stats.draws;
+            s_black.resolvesAt = s_stats.resolves;
+        }
+#endif
 
         void CreateUntilePipeline()
         {
@@ -6982,9 +7275,16 @@ void main()
                 return false;
             }
             VkMemoryHostPointerPropertiesEXT hpp{ VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT };
-            if (s_vk->getMemoryHostPointerProperties(s_dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
-                    s_sharedHost, &hpp) != VK_SUCCESS)
+            if (VkResult r = s_vk->getMemoryHostPointerProperties(s_dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
+                    s_sharedHost, &hpp); r != VK_SUCCESS)
+            {
+                // (A driver can refuse the pointer itself: on Windows guest
+                // memory is a view of a file mapping, which only Intel's
+                // driver is known to import. Logged, so a bug report tells
+                // this from a refused allocation.)
+                fprintf(stderr, "[renderer] importing guest memory failed: the driver doesn't take its host pointer (%d)\n", int(r));
                 return false;
+            }
 
             VkExternalMemoryBufferCreateInfo embci{ VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO };
             embci.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
@@ -7094,6 +7394,37 @@ void main()
             return failed.empty() ? std::string() : " after " + failed + " failed";
         }
 
+        // The driver refused every place the plan had for guest memory or the
+        // upload ring (the line before this says which). Elsewhere abort(),
+        // as before. Windows: the game ends with a message, not abort(),
+        // whose SIGABRT handler writes a crash report (and Windows Error
+        // Reporting may add a dump) for what is the player's card or driver,
+        // not a bug in the game; the log has every place tried and the
+        // device's memory (the [renderer] memory heaps line). The tester
+        // build (no console) shows a box, as for a window that can't open
+        // (main.cpp); the watchdog stands down while it waits, so no hang
+        // report either. Called on the command processor's thread.
+        [[noreturn]] void EndWithoutMemory()
+        {
+#ifdef _WIN32
+            report::g_endingWithMessage.store(true);
+            fprintf(stderr, "[renderer] the graphics driver gave the game none of the memory it needs: the game ends here\n");
+            report::FlushLog();
+#ifdef SB_WINDOWS_GUI
+            int answer = MessageBoxA(nullptr,
+                "SpeedBreaker couldn't set up its memory on your graphics card: the graphics driver refused every place the "
+                "game tried (it needs 512 MB for the game's memory and 192 MB for drawing).\n\nUpdate your graphics driver and "
+                "try again. If it still happens, please send the game's log; it is in %LOCALAPPDATA%\\SpeedBreaker\\logs.",
+                "SpeedBreaker", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+            fprintf(stderr, "[renderer] message box closed (%d)\n", answer);
+#endif
+            report::FlushLog();
+            std::_Exit(1);
+#else
+            abort();
+#endif
+        }
+
         void CreateSharedMemory()
         {
             s_sharedHost = static_cast<uint8_t*>(g_memory.Translate(vmem::Physical().Base()));
@@ -7154,7 +7485,7 @@ void main()
             if (!placed)
             {
                 fprintf(stderr, "[renderer] guest memory: no place could hold it (%s failed; %s)\n", failed.c_str(), plan.why.c_str());
-                abort();
+                EndWithoutMemory();
             }
             if (placed->place == memplan::Place::kImport)
             {
@@ -7176,6 +7507,19 @@ void main()
             VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             bci.size = kRingSize;
             bci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+#ifdef _WIN32
+            // Texture uploads copy the untiled texels from the ring into
+            // their images (vkCmdCopyBufferToImage), which needs TRANSFER_SRC:
+            // without it the validation layer reports
+            // VUID-vkCmdCopyBufferToImage-srcBuffer-00174 on every upload.
+            // NFSMW_CHECK_FRONT(_SEC) copies the front image back into the
+            // ring (vkCmdCopyImageToBuffer), which needs TRANSFER_DST
+            // (VUID-vkCmdCopyImageToBuffer-dstBuffer-00191).
+            // The drivers met so far copy anyway; a new driver needn't.
+            // Windows only for now, so the other platforms stay as they are;
+            // the spec wants it everywhere.
+            bci.usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+#endif
             Check(vkCreateBuffer(s_dev, &bci, nullptr, &s_ring), "vkCreateBuffer(ring)");
             VkMemoryRequirements req;
             vkGetBufferMemoryRequirements(s_dev, s_ring, &req);
@@ -7222,7 +7566,7 @@ void main()
             if (!placed)
             {
                 fprintf(stderr, "[renderer] upload ring: no place could hold it (%s failed; %s)\n", failed.c_str(), plan.why.c_str());
-                abort();
+                EndWithoutMemory();
             }
             // The choice and why, in one line.
             fprintf(stderr, "[renderer] memory: guest memory %s; upload ring in %s, memory type %u (%s)%s\n", s_guestChoice.c_str(),
@@ -7266,6 +7610,30 @@ void main()
                 { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, s_set0, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &ring, nullptr },
             };
             vkUpdateDescriptorSets(s_dev, AddSharedParts(w, 3, s_set0), w, 0, nullptr);
+#ifdef _WIN32
+            // (See s_slotSet0.) The same bindings, the constants at each slot.
+            VkDescriptorPoolSize slotSizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (s_splitMemory ? 5u : 2u) * kSlots },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kSlots } };
+            dpci.maxSets = kSlots;
+            dpci.pPoolSizes = slotSizes;
+            Check(vkCreateDescriptorPool(s_dev, &dpci, nullptr, &s_slotDescriptorPool), "slot descriptor pool");
+            for (uint32_t k = 0; k < kSlots; k++)
+            {
+                dsai.descriptorPool = s_slotDescriptorPool;
+                Check(vkAllocateDescriptorSets(s_dev, &dsai, &s_slotSet0[k]), "slot set 0");
+                VkDescriptorBufferInfo slotConstants{ s_ring, VkDeviceSize(k) * kSlotSize, kConstantsSize };
+                VkWriteDescriptorSet sw[6] = {
+                    { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, s_slotSet0[k], 0, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &s_sharedInfo[0], nullptr },
+                    { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, s_slotSet0[k], 1, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, nullptr, &slotConstants, nullptr },
+                    { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, s_slotSet0[k], 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &ring, nullptr },
+                };
+                vkUpdateDescriptorSets(s_dev, AddSharedParts(sw, 3, s_slotSet0[k]), sw, 0, nullptr);
+            }
+            const char* slotSets = std::getenv("NFSMW_SLOT_SETS");
+            s_slotSets = !slotSets || slotSets[0] != '0';
+            fprintf(stderr, "[renderer] set 0: %s\n", s_slotSets ? "one per ring slot (dynamic offsets under 16 MB)"
+                : "one for the whole ring (NFSMW_SLOT_SETS=0: dynamic offsets up to 192 MB)");
+#endif
         }
 
         void CreateSamplerAndDummies()
@@ -7543,6 +7911,34 @@ void main()
             last = c;
             lastStores = stores;
         }
+
+#ifdef _WIN32
+        // Fewer and lighter passes on an Intel integrated GPU (see
+        // kFewerPasses): the values the initializers above give with both on,
+        // for each variable not set, and what is derived from them; but the
+        // pass barrier stays at level 0 there (see s_passBarrierLevel).
+        void PassDefaultsForDevice()
+        {
+            if (!s_vk->integratedGpuDefaults)
+                return;
+            auto unset = [](const char* name) { return !std::getenv(name); };
+            if (unset("NFSMW_PASS_MERGE"))
+                s_passMerge = 3;
+            if (unset("NFSMW_CLEAR_FLUSH_RECT"))
+                s_clearFlushRect = true;
+            if (unset("NFSMW_DIRECT_CUBE"))
+                s_directCube = true;
+            if (unset("NFSMW_FUSE_PARTIAL"))
+                s_fusePartial = true;
+            if (unset("NFSMW_UNTILED_AREA"))
+                s_untiledArea = 1;
+            s_resolvePush = s_fusePartial || s_directCube ? offsetof(ResolveConstants, hostWrite) : offsetof(ResolveConstants, texX);
+            fprintf(stderr, "[renderer] passes: merge %u, clear flush rect %s, direct cubes %s, fused partial resolves %s, "
+                "untiled area %s, barrier level %u (an Intel integrated GPU; NFSMW_* variables override)\n",
+                s_passMerge, s_clearFlushRect ? "on" : "off", s_directCube ? "on" : "off", s_fusePartial ? "on" : "off",
+                s_untiledArea ? "on" : "off", s_passBarrierLevel);
+        }
+#endif
     }
 
     bool Initialize(const uint32_t* regs)
@@ -7552,6 +7948,9 @@ void main()
             return false;
         s_dev = s_vk->device;
         s_regs = regs;
+#ifdef _WIN32
+        PassDefaultsForDevice();  // before anything reads them
+#endif
         {
             VkPhysicalDeviceProperties props;
             vkGetPhysicalDeviceProperties(s_vk->physical, &props);
@@ -7679,6 +8078,9 @@ void main()
             CreateComputePipeline(kFrontGlsl, bindings.data(), uint32_t(bindings.size()), 14 * sizeof(uint32_t), s_frontSetLayout,
                 s_frontLayout, s_frontPipeline);
         }
+#ifdef _WIN32
+        CreateBlackCheck();
+#endif
         Flush();
         fprintf(stderr, "[renderer] ready: guest physical memory %s (%llu MB)\n",
             !s_shadowMode ? "imported" : s_shadowInVram ? "copied for the GPU, in VRAM" : "copied for the GPU, in host memory",
@@ -9668,12 +10070,25 @@ void main()
             memcpy(bound.bias, bias, sizeof(bias));
         }
 
+#ifdef _WIN32
+        // The constants' slot's set and their offset in it (see s_slotSet0).
+        // `bound` keeps the whole ring offset, which names both, so a skip
+        // never leaves another slot's set bound.
+        VkDescriptorSet set0 = s_slotSets ? s_slotSet0[constantsOffset / kSlotSize] : s_set0;
+        uint32_t dynamicOffset = uint32_t(s_slotSets ? constantsOffset % kSlotSize : constantsOffset);
+        if (fresh || bound.setOffset != uint32_t(constantsOffset))
+        {
+            vkCmdBindDescriptorSets(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout.pipeline, 0, 1, &set0, 1, &dynamicOffset);
+            bound.setOffset = uint32_t(constantsOffset);
+        }
+#else
         uint32_t dynamicOffset = uint32_t(constantsOffset);
         if (fresh || bound.setOffset != dynamicOffset)
         {
             vkCmdBindDescriptorSets(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout.pipeline, 0, 1, &s_set0, 1, &dynamicOffset);
             bound.setOffset = dynamicOffset;
         }
+#endif
 
         VkWriteDescriptorSet writes[96];
         uint32_t writeCount = 0;
@@ -10112,6 +10527,10 @@ void main()
         vkCmdDispatch(s_cmd, (outW + 7) / 8, (outH + 7) / 8, 1);
         GuardGpu(pc.base, frontBytes, false, "front buffer");
         FullBarrier();
+#ifdef _WIN32
+        if (s_black.on)
+            RecordBlackProbe(front, outW, outH);
+#endif
         SubmitRecorded(7);  // the presenter's blit comes later in queue order
         video::SubmitFrontImage(front.image, outW, outH, width, height, between, shift, target);
         // Back at 1x (a live change): the host-resolution image is no longer

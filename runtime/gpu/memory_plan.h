@@ -30,6 +30,32 @@
 // shared mapping, then a copy in uncached system memory; ring in VRAM), the
 // Steam Frame and other unified-memory devices (a copy in their one
 // host-visible device memory), and Apple's (imported).
+//
+// Windows. NVIDIA's Windows driver exposes CPU-mapped VRAM as its own
+// heap, a 256 MB window (214-256 MB) unless resizable BAR is on in the
+// firmware and the driver's profile for the game turns it on, which it does
+// only for games it knows: the window kit 1 (the first Windows tester
+// build) put the 512 MB copy in, so it quit at startup on such a card. The
+// plan is the same on Windows; what differs is the import. Guest physical
+// memory there is a view of one pagefile-backed section, mapped at each of
+// its three windows into placeholders (platform/win32/memory.cpp:
+// VirtualAlloc2, MapViewOfFile3), and the import is of the 0xA0000000 view.
+// Intel's Windows driver imports it, and on the ThinkPad that tested the
+// port the write watch's VirtualProtect (read-only and no-access pages, in
+// all three views) leaves the imported memory working both ways: the
+// laptop.md P0 probe, item f, and every run since. That is the failure
+// ANV's import has (ImportRefusal) and Windows' can't: Windows gives drivers
+// no MMU notifier, so a driver that maps a process's pages for its device
+// locks them for as long as it uses them, and a protection change reaches
+// only the CPU's page tables. Whether NVIDIA's and AMD's Windows drivers take
+// a file mapping's view is unknown. If one doesn't, it refuses at once
+// (vkGetMemoryHostPointerPropertiesEXT or vkAllocateMemory), the renderer
+// logs that, and the copy in system memory comes next. So a discrete GPU
+// without resizable BAR imports first on Windows too: the copy in system
+// memory would put guest memory in the same place (system RAM the GPU
+// reads over PCIe) and add the CPU's page copies (writewatch::SyncShadow)
+// every frame, and copies back of what resolves wrote when the CPU reads
+// it. The copy goes first only where it lives in VRAM.
 #pragma once
 #include <cstdint>
 #include <cstdio>

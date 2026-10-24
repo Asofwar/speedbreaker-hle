@@ -20,7 +20,12 @@
 #include <string_view>
 #include <vector>
 
+#ifdef _WIN32
+#include <process.h>  // _getpid
+#include <stdlib.h>   // _putenv_s
+#else
 #include <unistd.h>  // mkdtemp
+#endif
 #ifdef __APPLE__
 #include <TargetConditionals.h>  // TARGET_OS_IOS: the row is hidden there
 #endif
@@ -347,6 +352,21 @@ int main()
     TestArchiveHash();
     TestFiles();
 
+#ifdef _WIN32
+    // Windows has no mkdtemp (settings_keys_test's way): a folder named
+    // after this process, made new; and no unsetenv.
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / ("language_test-" + std::to_string(_getpid()));
+    std::error_code scratchError;
+    std::filesystem::remove_all(scratch, scratchError);
+    const bool made = std::filesystem::create_directory(scratch, scratchError);
+    CHECK(made, "a scratch folder");
+    if (made)
+    {
+        _putenv_s("NFSMW_LANGUAGE", "");
+        TestOption(scratch);
+        std::filesystem::remove_all(scratch, scratchError);
+    }
+#else
     char tmpl[] = "/tmp/language_test.XXXXXX";
     const char* dir = mkdtemp(tmpl);
     CHECK(dir != nullptr, "a scratch folder");
@@ -356,6 +376,7 @@ int main()
         TestOption(dir);
         std::filesystem::remove_all(dir);
     }
+#endif
 
     if (g_failures)
     {

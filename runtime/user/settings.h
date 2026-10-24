@@ -247,11 +247,14 @@ namespace settings
     double GetStoredValue(Id id);
     bool IsDefault(Id id);  // stored value == default
 
-    // Main thread, before Load(): `value` is the option's default on this
-    // device instead of the table's (Frame Rate's Auto on an iPhone): what a
-    // settings.toml without the option gives, and what Reset and IsDefault
-    // use. Logged, with `why`. A settings.toml that a save wrote holds every
-    // option, so it keeps the value it has.
+    // Main thread: `value` is the option's default on this device instead of
+    // the table's (Frame Rate's Auto on an iPhone): what a settings.toml
+    // without the option gives, and what Reset and IsDefault use. Logged,
+    // with `why`. A settings.toml that a save wrote holds every option, so
+    // it keeps the value it has. Before Load(), or after it for a GPU's
+    // defaults (its device exists only once the window does): then an
+    // option the file didn't hold, unchanged since and applied live, takes
+    // the new default at once (listeners are told; not a change to save).
     void SetDeviceDefault(Id id, double value, std::string_view why);
     // The option's default on this device: the table's, or SetDeviceDefault's.
     double DefaultValue(Id id);
