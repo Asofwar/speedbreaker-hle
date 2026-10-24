@@ -2494,9 +2494,80 @@ shaderPreamble;
             return module;
         }
 
-        VkShaderModule PixelVariant(Shader& ps, uint32_t outputs, uint32_t inputs, bool alphaTest)
+        // Settings > Graphics > Shadow Filtering, PCSS (krittinen's pull
+        // request #43): the blocker search runs once per 9-tap group (cached
+        // per pixel in globals); each of the game's taps then reads one
+        // jittered depth inside the penumbra, so the game's own 9-tap average
+        // becomes the filter. PCSS_SCALE: filter radius in texels per unit of
+        // normalized depth difference; PCSS_MAX_RADIUS: widest search / filter
+        // radius (NFSMW_PCSS_SCALE, NFSMW_PCSS_MAX_RADIUS).
+        constexpr char kShadowPcssGlsl[] = R"(
+vec2 g_pcssUv[64];
+int g_pcssGroup = -1;
+float g_pcssRadius = 0.0;
+vec2 g_pcssRotation = vec2(1.0, 0.0);
+const vec2 kPcssPoisson[9] = vec2[9](
+    vec2(-0.202364, -0.096147),
+    vec2(-0.803133, -0.081058),
+    vec2( 0.070341,  0.430444),
+    vec2( 0.334362, -0.304084),
+    vec2(-0.682725,  0.357424),
+    vec2( 0.750426, -0.556983),
+    vec2( 0.430213,  0.835631),
+    vec2(-0.472458,  0.778306),
+    vec2(-0.321404, -0.708171)
+);
+
+vec2 rotatePcssSample(vec2 sampleOffset)
+{
+    return vec2(sampleOffset.x * g_pcssRotation.x - sampleOffset.y * g_pcssRotation.y,
+        sampleOffset.x * g_pcssRotation.y + sampleOffset.y * g_pcssRotation.x);
+}
+
+float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int group, int tap)
+{
+    ivec2 size = textureSize(shadowMap, 0);
+    ivec2 maxPixel = size - ivec2(1);
+    vec2 center = uv * vec2(size);
+    // Radii are in 1600-wide texels: scaled so the penumbra keeps the same
+    // world size at any shadow map size.
+    float texelScale = float(size.x) / 1600.0;
+    if (g_pcssGroup != group)
+    {
+        g_pcssGroup = group;
+        float angle = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+        g_pcssRotation = vec2(cos(angle), sin(angle));
+        float blockerDepth = 0.0;
+        int blockerCount = 0;
+        for (int i = 0; i < 8; ++i)
         {
-            uint32_t key = (outputs & 0xF) | ((inputs & 0xFFFF) << 4) | (alphaTest ? 1u << 20 : 0);
+            vec2 offset = rotatePcssSample(kPcssPoisson[i]) * (PCSS_MAX_RADIUS * texelScale);
+            float depth = texelFetch(shadowMap, clamp(ivec2(floor(center + offset)), ivec2(0), maxPixel), 0).x;
+            if (depth < receiverDepth)
+            {
+                blockerDepth += depth;
+                ++blockerCount;
+            }
+        }
+        g_pcssRadius = blockerCount == 0 ? 0.0 :
+            clamp((receiverDepth - blockerDepth / float(blockerCount)) * PCSS_SCALE, 1.0, PCSS_MAX_RADIUS);
+    }
+    if (g_pcssRadius <= 0.0)
+        return receiverDepth + 1.0;
+    vec2 offset = rotatePcssSample(kPcssPoisson[tap]) * (g_pcssRadius * texelScale);
+    float depth = texelFetch(shadowMap, clamp(ivec2(floor(center + offset)), ivec2(0), maxPixel), 0).x;
+    return depth >= receiverDepth ? receiverDepth + 1.0 : receiverDepth - 1.0;
+}
+)";
+
+        // `pcssSlot` < 32: the variant whose shadow taps from that 2D slot
+        // are PCSS-filtered (Shadow Filtering; the translator marks the
+        // slots, TranslatedShader::pcssSlotMask).
+        VkShaderModule PixelVariant(Shader& ps, uint32_t outputs, uint32_t inputs, bool alphaTest, uint32_t pcssSlot = 32)
+        {
+            bool pcss = pcssSlot < 32;
+            uint32_t key = (outputs & 0xF) | ((inputs & 0xFFFF) << 4) | (alphaTest ? 1u << 20 : 0) |
+                (pcss ? (1u << 21) | (pcssSlot << 22) : 0);
             std::lock_guard lock(ps.compileMutex);
             auto it = ps.variants.find(key);
             if (it != ps.variants.end())
@@ -2510,8 +2581,32 @@ shaderPreamble;
                     preamble += std::format("#define IN{}\n", i);
             if (alphaTest)
                 preamble += "#define ALPHA_TEST\n";
+            const std::string plainPreamble = preamble;
+            std::string source = ps.info.glsl;
+            if (pcss)
+            {
+                size_t main = source.find("void main()");
+                if (!(ps.info.pcssSlotMask & (1u << pcssSlot)) || main == std::string::npos)
+                    pcss = false;
+                else
+                {
+                    static const float pcssScale = [] { const char* v = std::getenv("NFSMW_PCSS_SCALE"); return v ? float(atof(v)) : 400.0f; }();
+                    static const float pcssMaxRadius = [] { const char* v = std::getenv("NFSMW_PCSS_MAX_RADIUS"); return v ? float(atof(v)) : 8.0f; }();
+                    preamble += std::format("#define SHADOW_PCSS\n#define SHADOW_PCSS_SLOT {}\n#define PCSS_SCALE {:.4f}\n#define PCSS_MAX_RADIUS {:.4f}\n",
+                        pcssSlot, pcssScale, pcssMaxRadius);
+                    source.insert(main, kShadowPcssGlsl);
+                    fprintf(stderr, "[shadow-filter] PCSS for ps_%016llx slot %u\n", (unsigned long long)ps.hash, pcssSlot);
+                }
+            }
             std::string log;
-            auto spirv = CompileGlsl(ps.info.glsl, GLSLANG_STAGE_FRAGMENT, log, preamble);
+            auto spirv = CompileGlsl(source, GLSLANG_STAGE_FRAGMENT, log, preamble);
+            if (spirv.empty() && pcss)
+            {
+                fprintf(stderr, "[shadow-filter] PCSS compile failed for ps_%016llx slot %u; the game's own filter instead:\n%s\n",
+                    (unsigned long long)ps.hash, pcssSlot, log.c_str());
+                log.clear();
+                spirv = CompileGlsl(ps.info.glsl, GLSLANG_STAGE_FRAGMENT, log, plainPreamble);
+            }
             VkShaderModule module = VK_NULL_HANDLE;
             if (spirv.empty())
                 fprintf(stderr, "[renderer] ps_%016llx (variant %x): GLSL compile failed:\n%s\n",
@@ -3548,6 +3643,24 @@ shaderPreamble;
         static_assert(sizeof(PipelineKey) == gpu::pipeline_keys::kKeyBytes && offsetof(PipelineKey, vs) == 0 &&
             offsetof(PipelineKey, ps) == 8);
 
+        // The 2D slot the sun's shadow map is bound to for `shader` (32: none):
+        // its depth format (22, D24 as floats) at one of the sizes
+        // game/colour_grade.cpp's Shadow Resolution creates it at.
+        uint32_t ShadowTextureSlot(const Shader& shader)
+        {
+            for (uint32_t slots = shader.info.texture2DMask & shader.info.pcssSlotMask; slots; slots &= slots - 1)
+            {
+                uint32_t slot = uint32_t(__builtin_ctz(slots));
+                xenos::xe_gpu_texture_fetch_t fetch;
+                memcpy(&fetch, &s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + slot * 6], sizeof(fetch));
+                uint32_t width = fetch.size_2d.width + 1, height = fetch.size_2d.height + 1;
+                if (fetch.type == xenos::FetchConstantType::kTexture && uint32_t(fetch.format) == 22 && width == height &&
+                    (width == 1600 || width == 1200 || width == 800))
+                    return slot;
+            }
+            return 32;
+        }
+
         struct PipelineKeyHash
         {
             size_t operator()(const PipelineKey& k) const
@@ -3628,7 +3741,9 @@ shaderPreamble;
             {
                 uint32_t psRegs = std::min(16u, ps.info.registerCount);
                 uint32_t inputs = vs.info.interpolatorMask & ((1u << psRegs) - 1);
-                VkShaderModule psModule = PixelVariant(ps, prepass ? 0u : outputs, inputs, (key.raster >> 5) & 1);
+                // pad: Shadow Filtering's PCSS, with the shadow map's slot (Draw).
+                const uint32_t pcssSlot = !prepass && (key.pad >> 5) == uint32_t(settings::ShadowFilteringMode::Pcss) ? key.pad & 31 : 32;
+                VkShaderModule psModule = PixelVariant(ps, prepass ? 0u : outputs, inputs, (key.raster >> 5) & 1, pcssSlot);
                 if (!psModule)
                     return VK_NULL_HANDLE;
                 stages[1] = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -12411,6 +12526,12 @@ void main()
         PipelineKey key{};
         key.vs = s_vs->hash;
         key.ps = s_ps->hash;
+        if (s_ps->info.pcssSlotMask && settings::GetInt(settings::Id::ShadowFiltering) == int32_t(settings::ShadowFilteringMode::Pcss))
+        {
+            uint32_t shadowSlot = ShadowTextureSlot(*s_ps);
+            if (shadowSlot < 32)
+                key.pad = (uint32_t(settings::ShadowFilteringMode::Pcss) << 5) | shadowSlot;
+        }
         key.topology = topology;
         key.restart = restart;
         static const uint32_t blendRegs[4] = { XE_GPU_REG_RB_BLENDCONTROL0, XE_GPU_REG_RB_BLENDCONTROL1,
@@ -14015,6 +14136,7 @@ void main()
                 !blends && (!discards || s_prepassLevel >= 2) && s_ps && !s_ps->info.writesDepth && !barPlan.rectCount && !zpdCount)
             {
                 PipelineKey pk = key;
+                pk.pad = 0;  // (depth only: no shadow filtering)
                 for (uint32_t& b : pk.blend)
                     b = ~0u;
                 pk.colorMask = 0;

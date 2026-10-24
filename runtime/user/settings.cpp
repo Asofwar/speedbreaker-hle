@@ -139,6 +139,11 @@ namespace settings
             { 800, "800", "800 (fastest)" },
         };
 
+        constexpr EnumEntry kShadowFilteringEntries[] = {
+            { int32_t(ShadowFilteringMode::Original), "original", "Original" },
+            { int32_t(ShadowFilteringMode::Pcss), "pcss", "Soft (PCSS)" },
+        };
+
         constexpr EnumEntry kReflectionEntries[] = {
             { 1, "every_frame", "Every frame (original)" },
             { 2, "every_2", "Every 2nd frame" },
@@ -372,6 +377,10 @@ namespace settings
               .table = "video", .key = "shadow_resolution", .label = "Shadow Resolution",
               .description = "The size of the sun's shadow map. Smaller is faster (the shadow pass is about a fifth of a race frame) but softer. Changed in the game's own code where it creates the map. Applies from the next start.",
               .env = "NFSMW_SHADOW_SIZE", .defaultValue = 1600, .entries = kShadowEntries },
+            { .id = Id::ShadowFiltering, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
+              .table = "video", .key = "shadow_filtering", .label = "Shadow Filtering",
+              .description = "Original: the game's own filter. Soft: shadows sharp where they touch what casts them and softer further away (PCSS). Costs some GPU time in the scene.",
+              .env = "NFSMW_SHADOW_FILTERING", .defaultValue = double(ShadowFilteringMode::Original), .entries = kShadowFilteringEntries },
             { .id = Id::ReflectionRefresh, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
               .table = "video", .key = "reflection_refresh", .label = "Reflection Refresh",
               .description = "The cars' reflections come from a cube map the game redraws (six passes) every frame, about a fifth of a heavy frame. Redrawing only some faces each frame, in turn, makes it much cheaper; the reflections then update a little less often.",
