@@ -132,6 +132,12 @@ namespace settings
             { 24, "3x", "3x (2160p)" },
         };
 
+        constexpr EnumEntry kColorFilterEntries[] = {
+            { int32_t(ColorFilterMode::Original), "original", "Original" },
+            { int32_t(ColorFilterMode::Soft), "soft", "Soft" },
+            { int32_t(ColorFilterMode::Off), "off", "Off" },
+        };
+
         constexpr EnumEntry kOnlineModeEntries[] = {
             { 0, "off", "Off" },
             { 1, "host", "Host" },
@@ -293,6 +299,11 @@ namespace settings
                   ? "Render the 3D scene above or below the 360's 720p. On a screen of another shape filled by Fill Screen, each step renders that shape: 1x on a Steam Deck is its own 1280x800. Auto: from the screen (1440p: 2x, 3x2 filling an ultrawide; a Steam Deck: its 1280x800). Below 1x saves power on a handheld, softer: meant with Upscaling FSR 1."
                   : "Render the 3D scene above or below the 360's 720p. On a screen of another shape filled by Fill Screen, each step renders that shape: 1x on a Steam Deck is its own 1280x800. Auto: from the screen (1440p: 2x, 3x2 filling an ultrawide; a Steam Deck: its 1280x800). Below 1x saves power on a handheld, softer.",
               .env = "NFSMW_RESOLUTION", .defaultValue = kResolutionAuto, .entries = kResolutionEntries },
+            { .id = Id::ColorFilter, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
+              .table = "video", .key = "color_filter", .label = "Color Filter",
+              .description = "Most Wanted's yellow-green tint, its desaturation and its vignette in races and free roam. "
+                  "Original: as on the Xbox 360. Soft: half as strong. Off: none (the glow and the fades stay).",
+              .env = "NFSMW_COLOR_FILTER", .defaultValue = double(ColorFilterMode::Original), .entries = kColorFilterEntries },
             { .id = Id::WindowWidth, .category = Category::Display, .type = Type::Int, .apply = Apply::Restart, .hidden = true,
               .table = "video", .key = "window_width", .label = "Window Width",
               .description = "The window's width when the game starts.",

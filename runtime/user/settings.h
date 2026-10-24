@@ -54,6 +54,7 @@ namespace settings
         Anisotropy,
         Mipmaps,
         InternalResolution,
+        ColorFilter,   // the race's colour treatment (gpu/renderer.cpp's visual treatment): ColorFilterMode
         WindowWidth,   // hidden: the window's size, remembered between runs
         WindowHeight,  // hidden
         // Audio
@@ -173,6 +174,15 @@ namespace settings
     // Anisotropy: 1 (off), 2, 4, 8, 16, or one of these.
     constexpr int32_t kAnisotropyAuto = 0;   // 16x on a discrete GPU or an M-series iPad, 4x on other integrated ones
     constexpr int32_t kAnisotropyGame = -1;  // each texture's own setting, as on the 360
+
+    // Graphics > Color Filter: the game's own (as on the 360), at half its
+    // strength, or none (its tint, desaturation and vignette taken out).
+    enum class ColorFilterMode : int32_t
+    {
+        Original = 0,
+        Soft = 1,
+        Off = 2,
+    };
 
     struct EnumEntry
     {

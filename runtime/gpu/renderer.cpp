@@ -800,6 +800,7 @@ namespace gpu::renderer
         uint64_t s_lastConstantsSubmission = 0; // submission holding s_lastConstantsOffset
         const void* s_lastConstLayoutVs = nullptr;  // the layout of that upload (see Draw)
         const void* s_lastConstLayoutPs = nullptr;
+        bool s_lastFiltered = false;  // the last upload had Color Filter's constants (ColorFilterConstants)
         VkCommandBuffer s_cmd = VK_NULL_HANDLE;
         // NFSMW_PREPASS=1 (see kPrepassDefault): a depth pre-pass in each pass with
         // colour and depth targets. The pass records into two secondary
@@ -1967,6 +1968,10 @@ namespace gpu::renderer
             // depth-only one): the pipeline key list keeps them, to make it
             // again in a later session (gpu/pipeline_keys.h).
             std::vector<uint32_t> words;
+            // A pixel shader of the race's final composite (the visual
+            // treatment: VisualTreatmentPixelShader): Settings > Graphics >
+            // Color Filter takes its colour curve and vignette out (ColorFilterConstants).
+            bool visualTreatment = false;
             std::mutex compileMutex;
             bool vertexCompiled = false, rectCompiled = false;
             VkShaderModule moduleRect = VK_NULL_HANDLE;  // VS with SB_RECT: for rectangle lists (raster bit 9)
@@ -2004,6 +2009,48 @@ namespace gpu::renderer
         // s_shaders under `hash` (pipeline_keys::ShaderHash of them): for
         // LoadShader, and for the pipeline prewarm from the key list's words
         // (the same words translate to the same shader).
+        // The race's final composite pixel shader (the visual treatment), by
+        // the hash of its words (gpu/pipeline_keys.h's ShaderHash) as the USA
+        // disc's executable loads it. Its constants: c1.x the vignette, c4 the
+        // bloom scale, c6..c9 the colour curve (Coeffs0..3: a cubic in
+        // MISCMAP1.w, ((c9 x + c8) x + c7) x + c6; a neutral one is (0, 1, 1,
+        // 1) and zeros), c10 the fades' brightness (the registers as NFSMW
+        // Recompiled found them; the other shaders that read c6..c9 have
+        // their own layouts and are left alone).
+        bool IsVisualTreatment(uint64_t hash)
+        {
+            return hash == 0xd52a5eb6c17f9598ull;
+        }
+
+        // Settings > Graphics > Color Filter, on the constants uploaded for a
+        // visual treatment draw (`c`: the upload's PS range, `packed` its
+        // layout or null for the whole file): the curve moved toward the
+        // neutral one (all of the way: Off, half: Soft; the curve is linear
+        // in its coefficients) and the vignette by as much.
+        void ColorFilterConstants(uint8_t* c, const Shader* packed, settings::ColorFilterMode mode)
+        {
+            const float f = mode == settings::ColorFilterMode::Off ? 1.0f : 0.5f;
+            auto at = [&](uint32_t n) -> float* {
+                if (!packed)
+                    return reinterpret_cast<float*>(c + n * 16);
+                const uint64_t* used = packed->info.constUsed;
+                if (!(used[n / 64] >> (n % 64) & 1))
+                    return nullptr;
+                uint32_t slot = 0;
+                for (uint32_t q = 0; q < n / 64; q++)
+                    slot += uint32_t(__builtin_popcountll(used[q]));
+                slot += uint32_t(__builtin_popcountll(used[n / 64] & ((1ull << (n % 64)) - 1)));
+                return reinterpret_cast<float*>(c + slot * 16);
+            };
+            static constexpr float kNeutral[4][4] = { { 0, 1, 1, 1 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } };
+            for (uint32_t k = 0; k < 4; k++)
+                if (float* v = at(6 + k))
+                    for (uint32_t i = 0; i < 4; i++)
+                        v[i] += (kNeutral[k][i] - v[i]) * f;
+            if (float* v = at(1))
+                v[0] *= 1.0f - f;
+        }
+
         Shader* MakeShader(uint32_t type, uint64_t hash, const uint32_t* words, uint32_t dwords)
         {
             auto& slot = s_shaders[hash];
@@ -2015,6 +2062,7 @@ namespace gpu::renderer
             for (uint32_t i = 0; i < dwords; i++)
                 ucode[i] = __builtin_bswap32(words[i]);
             slot->info = TranslateShader(slot->stage, ucode.data(), dwords);
+            slot->visualTreatment = slot->stage == ShaderStage::Pixel && IsVisualTreatment(hash);
             if (!slot->info.ok)
                 fprintf(stderr, "[renderer] %s_%016llx: translation failed: %s\n", type == 0 ? "vs" : "ps",
                     (unsigned long long)hash, slot->info.error.c_str());
@@ -11941,11 +11989,15 @@ void main()
         // were 9 KB an upload, ~2,500 uploads a frame into the BAR ring.
         const Shader* constLayoutVs = s_vs->info.constPacked ? s_vs : nullptr;
         const Shader* constLayoutPs = s_ps->info.constPacked ? s_ps : nullptr;
+        // Settings > Graphics > Color Filter: this draw's constants changed
+        // (ColorFilterConstants), and the next draw's uploaded again.
+        const auto colorFilter = settings::ColorFilterMode(settings::GetInt(settings::Id::ColorFilter));
+        const bool filtered = s_ps->visualTreatment && colorFilter != settings::ColorFilterMode::Original;
         while (true)
         {
             bool uploadConstants = g_constantsDirty.load(std::memory_order_relaxed) ||
                 s_lastConstantsSubmission != s_submissionCounter || !s_recording ||
-                constLayoutVs != s_lastConstLayoutVs || constLayoutPs != s_lastConstLayoutPs;
+                constLayoutVs != s_lastConstLayoutVs || constLayoutPs != s_lastConstLayoutPs || filtered || s_lastFiltered;
             VkDeviceSize need = (uploadConstants ? kConstantsSize : 0) + (useIndices ? 256 + indexBytes : 0) +
                 (copyCount ? 256 + copyBytes : 0);
             if (need == 0)
@@ -11973,6 +12025,9 @@ void main()
                 };
                 copyStage(constLayoutVs, 0);    // pc.vsConstBase
                 copyStage(constLayoutPs, 256);  // pc.psConstBase
+                if (filtered)
+                    ColorFilterConstants(c + 256 * 16, constLayoutPs, colorFilter);
+                s_lastFiltered = filtered;
                 s_lastConstLayoutVs = constLayoutVs;
                 s_lastConstLayoutPs = constLayoutPs;
                 memcpy(c + 512 * 16, &s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0], 48 * 16);
