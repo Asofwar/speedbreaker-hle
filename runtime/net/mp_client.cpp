@@ -85,6 +85,7 @@ namespace mp
         uint8_t myId = 0;
         uint64_t myCarKey = 0;
         bool myReady = false;
+        uint32_t myRaceKey = 0;
         int heldNow = 0, heldNeed = 0;
         bool go = false;
         float goClock = 0;
@@ -172,7 +173,7 @@ namespace mp
                     m->welcome = r.ok();
                     if (m->welcome && (m->myCarKey || m->myReady))
                     {
-                        Writer w(Msg::PlayerInfo); w.u32(uint32_t(m->myCarKey >> 32)); w.u32(uint32_t(m->myCarKey)); w.u8(m->myReady ? 1 : 0);
+                        Writer w(Msg::PlayerInfo); w.u32(uint32_t(m->myCarKey >> 32)); w.u32(uint32_t(m->myCarKey)); w.u8(m->myReady ? 1 : 0); w.u32(m->myRaceKey);
                         m->Send(kChanEvent, w, true);   // after a reconnect the server must hear it again
                     }
                     break;
@@ -181,10 +182,12 @@ namespace mp
                     const uint8_t id = r.u8();
                     const uint32_t hi = r.u32(), lo = r.u32();
                     const uint8_t rdy = r.u8();
+                    const uint32_t race = r.u32();
                     if (r.ok() && id != m->myId)
                     {
                         m->remotes[id].carKey = (uint64_t(hi) << 32) | lo;
                         m->remotes[id].lobbyReady = rdy != 0;
+                        m->remotes[id].raceKey = race;
                     }
                     break;
                 }
@@ -368,12 +371,13 @@ namespace mp
         m->Send(kChanState, w, false);
     }
 
-    void Client::SetLobby(uint64_t key, bool ready)
+    void Client::SetLobby(uint64_t key, bool ready, uint32_t raceKey)
     {
         m->myCarKey = key;
         m->myReady = ready;
+        m->myRaceKey = raceKey;
         if (!m->welcome) return;   // sent when the welcome arrives
-        Writer w(Msg::PlayerInfo); w.u32(uint32_t(key >> 32)); w.u32(uint32_t(key)); w.u8(ready ? 1 : 0);
+        Writer w(Msg::PlayerInfo); w.u32(uint32_t(key >> 32)); w.u32(uint32_t(key)); w.u8(ready ? 1 : 0); w.u32(raceKey);
         m->Send(kChanEvent, w, true);
     }
     void Client::SendHold(uint8_t need, float worldClock)

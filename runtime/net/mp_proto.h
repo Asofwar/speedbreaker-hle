@@ -11,7 +11,7 @@
 namespace mp
 {
     constexpr uint16_t kDefaultPort = 27960;
-    constexpr uint32_t kProtocolVersion = 9;
+    constexpr uint32_t kProtocolVersion = 10;
     constexpr size_t kMaxChat = 160;        // a chat line's characters (Writer::text)
     constexpr uint8_t kServerId = 0xFF;     // Chat's sender id for the server's own lines (its console)
     constexpr int kMaxPlayers = 16;
@@ -29,7 +29,8 @@ namespace mp
         CarState,       // C->S unreliable: the sender's car
         Snapshot,       // S->C unreliable: every other player's latest car, one message per server tick
         Chat,           // C->S reliable: text; S->C reliable: sender id (kServerId: the server), text. Up to kMaxChat printable ASCII characters
-        PlayerInfo,     // C->S reliable: the car I chose in the lobby (type key, 0: none) and whether I am ready to race; S->C reliable: id, car key, ready
+        PlayerInfo,     // C->S reliable: the car I chose in the lobby (type key, 0: none), whether I am ready to race and the race my game has selected (the front end's
+                        // race key, 0: none); S->C reliable: id, car key, ready, race key
         Hold,           // C->S reliable: my game is held at the start of a race: players the race needs (u8), my world clock (f32)
         Unhold,         // C->S reliable: I leave the start barrier without a Go (cancelled, or the race was left)
         Barrier,        // S->C reliable: how many players are held at the start, how many the race needs (u8, u8); sent on every change to the held players

@@ -99,7 +99,8 @@ namespace ui
                 ImGui::Spacing();
                 ImGui::TextUnformatted("Players");
                 for (const auto& p : players)
-                    ImGui::BulletText("%s%s: %s%s", p.name.c_str(), p.self ? " (you)" : "", p.inRace ? "ready / in a race" : "in the menus", p.car.empty() ? "" : (", " + p.car).c_str());
+                    ImGui::BulletText("%s%s: %s%s%s", p.name.c_str(), p.self ? " (you)" : "", p.inRace ? "ready / in a race" : "in the menus", p.car.empty() ? "" : (", " + p.car).c_str(),
+                        p.racePicker ? ", picks the race" : "");
             }
             if (!players.empty())
             {

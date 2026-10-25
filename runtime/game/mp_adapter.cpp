@@ -48,6 +48,10 @@ namespace
     // The lobby choice of this player (set from the settings page, any thread): the car's type key and whether it is ready to race.
     std::atomic<uint64_t> g_lobbyCar{ 0 };
     std::atomic<bool> g_lobbyReady{ false };
+    std::atomic<uint8_t> g_raceHost{ 0xFF };   // the player whose selected race the next race is (0xFF: none)
+
+    // The front end's player record (*kFeRecord) and the selected race's key in it (Quick Race > Custom).
+    constexpr uint32_t kFeRecord = 0x82A2C684, kFeRaceKey = 0x34;
 
     constexpr const char* kWaitToast = "Waiting for the other players. Press B to start without them.";
     std::mutex g_statusMutex;
@@ -209,6 +213,9 @@ namespace
         int barrierExpected = 0;          // players the barrier waits for in this race
         bool pushedReady = false;
         uint64_t pushedCar = 0;
+        uint32_t pushedRace = 0;
+        uint32_t ownRace = 0;      // the race this game's front end has selected (when no other player's is held there)
+        uint32_t heldRace = 0;     // the host's race, held in this game's front end (0: none)
         // How many players the next race has: this one plus the others that are ready in the lobby, or the number from the settings when this player is not ready.
         int Expected() const
         {
@@ -750,11 +757,49 @@ namespace
             for (const std::string& line : out)
                 a.net->SendChat(line);
         }
-        if (a.net->Connected() && (a.pushedReady != g_lobbyReady.load() || a.pushedCar != g_lobbyCar.load()))
+        // The race (Quick Race > Custom): the front end's player record (*0x82A2C684) keeps the selected race's key at +0x34 (checked: Ironwood BCDB34C4, Campus Way
+        // 910968AF; a key held there while another race is selected in the menu makes the race the held one). The host is the ready player with the smallest id that
+        // has selected one; every other ready game holds the host's key there until its race exists, so all of them race the host's choice.
+        if (a.net->Connected() && !a.world && !a.localObj)
+        {
+            auto load = [&](uint32_t at) { return PPC_LOAD_U32(at); };
+            const uint32_t rec = load(kFeRecord);
+            if (rec > 0x80000000 && rec < 0xD0000000)
+            {
+                const uint32_t sel = load(rec + kFeRaceKey);
+                if (sel != a.heldRace)
+                    a.ownRace = sel;   // (the player chose something else since, or nothing is held)
+                uint8_t hostId = 0xFF;
+                uint32_t hostRace = 0;
+                if (g_lobbyReady.load() && a.ownRace)
+                {
+                    hostId = a.net->MyId();
+                    hostRace = a.ownRace;
+                }
+                for (const auto& [id, r] : a.net->Remotes())
+                    if (r.lobbyReady && r.raceKey && id < hostId)
+                    {
+                        hostId = id;
+                        hostRace = r.raceKey;
+                    }
+                const bool hold = g_lobbyReady.load() && hostId != a.net->MyId() && hostRace;
+                if (hold && sel != hostRace)
+                {
+                    PPC_STORE_U32(rec + kFeRaceKey, hostRace);
+                    if (a.heldRace != hostRace)
+                        fprintf(stderr, "[mp] the race is player %u's (race key %08X); this game had selected %08X\n", unsigned(hostId), hostRace, a.ownRace);
+                }
+                a.heldRace = hold ? hostRace : 0;
+                g_raceHost = hold ? hostId : g_lobbyReady.load() && a.ownRace ? a.net->MyId() : 0xFF;
+            }
+        }
+        const uint32_t myRace = g_lobbyReady.load() ? a.ownRace : 0;
+        if (a.net->Connected() && (a.pushedReady != g_lobbyReady.load() || a.pushedCar != g_lobbyCar.load() || a.pushedRace != myRace))
         {
             a.pushedReady = g_lobbyReady.load();
             a.pushedCar = g_lobbyCar.load();
-            a.net->SetLobby(a.pushedCar, a.pushedReady);
+            a.pushedRace = myRace;
+            a.net->SetLobby(a.pushedCar, a.pushedReady, a.pushedRace);
         }
         if (!a.localObj)
             return;
@@ -996,9 +1041,11 @@ namespace game
                                 return c.display;
                         return std::string(key ? "a car" : "");
                     };
-                    players.push_back({ a.name, carName(g_lobbyCar.load() ? g_lobbyCar.load() : a.myCarKey), g_lobbyReady.load() || a.localObj != 0, true });
+                    const uint8_t host = g_raceHost.load();
+                    players.push_back({ a.name, carName(g_lobbyCar.load() ? g_lobbyCar.load() : a.myCarKey), g_lobbyReady.load() || a.localObj != 0, true,
+                        host == a.net->MyId() });
                     for (const auto& [id, r] : a.net->Remotes())
-                        players.push_back({ r.name, carName(r.carKey), InRace(r), false });
+                        players.push_back({ r.name, carName(r.carKey), InRace(r), false, host == id });
                 }
                 std::lock_guard<std::mutex> g(g_statusMutex);
                 g_status = text;

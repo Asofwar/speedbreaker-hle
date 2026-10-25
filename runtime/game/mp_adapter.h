@@ -29,6 +29,7 @@ namespace game
         std::string car;      // the car it races in (its display name), empty when it is not in a race
         bool inRace = false;
         bool self = false;
+        bool racePicker = false;   // the next race is the one this player selected in Quick Race (the ready player with the smallest id that has selected one)
     };
     std::vector<MpPlayer> MpPlayers();
 

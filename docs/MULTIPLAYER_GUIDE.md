@@ -40,8 +40,10 @@ On the settings page (Online > *Multiplayer races*), under the players: type a l
 the minimap), also during a race. Use it to agree the race: the track, the direction, the laps.
 
 ## Race
-1. Every player starts **the same race**: the same mode, **the same track and direction**, with at least as many opponents as there are other players (the other players take over the first
-   opponents). Choose it in Quick Race > Custom Race; Quick Play picks a random track.
+1. Every player starts **the same race**, with at least as many opponents as there are other players (the other players take over the first opponents), from Quick Race > Custom
+   Race. **One player picks the track**: of the players who are ready, the one who joined the server first (the players list says "picks the race"). The others can choose any track
+   in the menu: their game races the picker's (the mode, the track and its direction come with it; the laps and the number of opponents are each game's own settings, so keep
+   those the same). Quick Play picks a random track and isn't shared.
 2. When your race has loaded, your game connects to the server and **holds the start** (the screen stays on the loading bar, with a message at the bottom) until all the players are there.
    Press **B** (or Back) to stop waiting and start without the others. The wait ends by itself after five minutes.
 3. The **server** decides when to start: when everyone the race needs is held at the start it releases them together, with one start time and the slowest game's world clock, so the
@@ -53,7 +55,7 @@ the minimap), also during a race. Use it to agree the race: the track, the direc
   also through walls). They show on the minimap like the game's own opponents (checked with a stand-in player on one machine).
 - Opponent cars look the same model on every machine, but paint, wheels, spoilers and vinyls are the game's random ones for that car, not the owner's own.
 - Laps and finishing places are the game's own (computed on each machine from where the cars are); the times in the standings can differ between machines.
-- The lobby sets cars and who is ready, not the race: the players agree the track and mode in the chat.
+- The race comes from the picker's Custom Race selection; the laps and opponents are each player's own settings.
 - Basic protection only: the server and every game drop car states that are not finite or are far outside what a car can do, limit one player to 120 states a second, clean player names, and
   disconnect a connection that does not say hello within five seconds. A modified client can still cheat with its own car (each game is trusted with it); there are no accounts or passwords.
 
