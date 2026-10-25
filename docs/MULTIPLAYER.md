@@ -524,5 +524,9 @@ replay's opponents:
   either.
 - The other LCG-looking code (0x19660D in `sub_82722AC0`, 16807 in `sub_82894C38` and its neighbours) is the audio dither and library code; `sub_823B72D0` is the Joylog's read
   (0 outside a replay), not a generator.
-So the choice is made elsewhere: by a generator of the game's own with another formula, or after creation when the model streams in. Next step, if picked up: watch which words of
-a pool vehicle's object (or its ride/parts record) differ between two runs right after `MakeVehicle`, then find their writer.
+So the choice is made elsewhere: by a generator of the game's own with another formula, or after creation when the model streams in.
+- Then the vehicle's memory right after `MakeVehicle` (the RX-8 the first pool car, four runs: lime green, green and black, pink, teal): its owner object (0x200 bytes) and the
+  0x100 bytes behind each heap pointer in it. Two runs with the same heap layout and different paint (lime, pink) have the same words everywhere outside the pointers, so the paint is
+  not in that object or one level below it at that point: it is chosen later (as the car's model and textures stream in), or kept in an object the vehicle doesn't point to yet.
+  Next, if picked up: the same dump a few seconds later, after the files of the car are loaded (`CARS\RX8\...` opens), or a write watch on the car's texture/paint records found from
+  the streaming side.
