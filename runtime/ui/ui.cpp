@@ -780,6 +780,12 @@ namespace ui
                 s_settingsOpen ? CloseSettings() : OpenSettings();
                 return;
             }
+            // F12: a photo (ui/photo.cpp), with the menu closed.
+            if (e.key.key == SDLK_F12 && !e.key.repeat && !s_modal && !s_settingsOpen)
+            {
+                TakePhoto();
+                return;
+            }
             if (s_settingsOpen && SettingsMenuTakesKey(e.key))
                 return;  // a Controls row took it: ImGui doesn't act on it too
             break;

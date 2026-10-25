@@ -23,6 +23,12 @@ namespace ui
 
     void NoteGameFrame()
     {
+        // NFSMW_TEST_PHOTO=<n>: a photo (ui/photo.cpp) at the n-th game frame
+        // shown, for a scripted run (a timedemo) to check one.
+        static const long testPhoto = [] { const char* v = std::getenv("NFSMW_TEST_PHOTO"); return v ? std::atol(v) : -1L; }();
+        static long shown = 0;
+        if (++shown == testPhoto)
+            TakePhoto();
         auto now = std::chrono::steady_clock::now();
         if (s_lastFrame.time_since_epoch().count() != 0)
         {

@@ -9256,8 +9256,19 @@ void main()
             return !active;
         }
 
+        // ReadBackScenePhoto: the request, and the colour target the game's
+        // final grade (kGradeShaderHashes) last drew into this frame (the
+        // next draw or resolve copies it, before anything is drawn over it).
+        std::mutex s_photoMutex;
+        FrontPixels s_photoDone;
+        uint64_t s_photoAsked = 0;  // s_frame when asked
+        RenderTarget* s_photoSource = nullptr;
+        void TakeScenePhoto();
+
         void Resolve()
         {
+            if (s_photoSource)
+                TakeScenePhoto();
             s_stats.resolves++;
             s_hle.resolves += s_hleCounting;
             auto copyControl = Reg<reg::RB_COPY_CONTROL>();
@@ -12687,6 +12698,8 @@ void main()
     {
         if (!s_vk)
             return;
+        if (s_photoSource)
+            TakeScenePhoto();
         reg::VGT_DRAW_INITIATOR initiator;
         initiator.value = initiatorValue;
         auto edramMode = Reg<reg::RB_MODECONTROL>().edram_mode;
@@ -12862,6 +12875,16 @@ void main()
         }
         // Before the textures are looked up: a draw into scaled targets
         // samples scaled textures (every attachment shares the pitch, so the scale).
+        // A photo asked for: the final grade's target, copied before the
+        // next draw or resolve (TakeScenePhoto).
+        if (s_photoDone && (s_ps->hash == kGradeShaderHashes[0] || s_ps->hash == kGradeShaderHashes[1]))
+            LogOnce(0x9070, "photo: the final grade drawn into %s", color[0] ? "a colour target" : "no colour target");
+        if (s_photoDone && color[0] && (s_ps->hash == kGradeShaderHashes[0] || s_ps->hash == kGradeShaderHashes[1]))
+        {
+            std::lock_guard lock(s_photoMutex);
+            if (s_photoDone)
+                s_photoSource = color[0];
+        }
         s_drawScaled = false;
         for (RenderTarget* rt : { color[0], color[1], color[2], color[3], depth })
             if (rt && !rt->scale.IsOne())
@@ -15535,9 +15558,59 @@ void main()
         return true;
     }
 
+    namespace
+    {
+        void ReadBackImage(const LastFront front, FrontPixels done);
+    }
+
     void ReadBackFrontImage(FrontPixels done)
     {
-        const LastFront front = s_lastFront;
+        ReadBackImage(s_lastFront, std::move(done));
+    }
+
+    void ReadBackScenePhoto(FrontPixels done)
+    {
+        std::lock_guard lock(s_photoMutex);
+        if (s_photoDone)
+        {
+            std::thread([done = std::move(done)] { done(nullptr, 0, 0); }).detach();
+            return;
+        }
+        s_photoDone = std::move(done);
+        s_photoAsked = s_frame;
+    }
+
+    namespace
+    {
+        // The final grade's target, the scene's part of it (its top
+        // 1280x720 guest pixels at the target's scale), read back as
+        // ReadBackFrontImage reads the front image. 8-bit RGBA targets only.
+        void TakeScenePhoto()
+        {
+            RenderTarget* rt = s_photoSource;
+            s_photoSource = nullptr;
+            FrontPixels done;
+            {
+                std::lock_guard lock(s_photoMutex);
+                done = std::move(s_photoDone);
+                s_photoDone = nullptr;
+            }
+            if (!done)
+                return;
+            if (rt->vkFormat != VK_FORMAT_R8G8B8A8_UNORM)
+            {
+                fprintf(stderr, "[photo] the final grade's target is format %d, not 8-bit RGBA: no photo\n", int(rt->vkFormat));
+                std::thread([done = std::move(done)] { done(nullptr, 0, 0); }).detach();
+                return;
+            }
+            FlushPendingClears(rt);
+            const uint32_t w = std::min(rt->width, rt->scale.x.Size(1280)), h = std::min(rt->height, rt->scale.y.Size(720));
+            fprintf(stderr, "[photo] the scene before its HUD, %ux%u\n", w, h);
+            ReadBackImage({ rt->image.image, w, h }, std::move(done));
+        }
+
+        void ReadBackImage(const LastFront front, FrontPixels done)
+        {
         if (!s_vk || !front.image)
         {
             done(nullptr, 0, 0);
@@ -15638,6 +15711,7 @@ void main()
             s_submissions[s_slot].writes.push_back({ std::move(landed) });
         }
         SignalWrites();  // (outside a pass: this recording has none open)
+        }
     }
 
     void OnSwap(uint64_t frame)
@@ -15676,6 +15750,17 @@ void main()
         }
         s_cacheFrame = frame;
         s_cubeResolves = 0;
+        s_photoSource = nullptr;  // (a target from this frame only)
+        {
+            // A photo asked for a second ago with no final grade since: none.
+            std::lock_guard lock(s_photoMutex);
+            if (s_photoDone && s_frame > s_photoAsked + 60)
+            {
+                FrontPixels done = std::move(s_photoDone);
+                s_photoDone = nullptr;
+                std::thread([done = std::move(done)] { done(nullptr, 0, 0); }).detach();
+            }
+        }
         AutoReflectionRefresh();
         s_frame = frame;
         if (s_vk)

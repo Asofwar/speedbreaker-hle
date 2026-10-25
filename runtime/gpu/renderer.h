@@ -100,6 +100,12 @@ namespace gpu::renderer
     // NFSMW_DUMP_FRAMES) or no memory for the copy.
     using FrontPixels = std::function<void(const uint8_t* rgba, uint32_t width, uint32_t height)>;
     void ReadBackFrontImage(FrontPixels done);
+    // The next frame's picture as the game's final grade leaves it, before
+    // its HUD, its menus and the pause screen are drawn over it (the photo:
+    // ui/photo.cpp), at internal resolution; `done` as above, (nullptr, 0,
+    // 0) when the frame had no final grade (a menu, a movie) within a
+    // second. Any thread.
+    void ReadBackScenePhoto(FrontPixels done);
 
     // After each swap (NFSMW_PASS_PROFILE=<frame> prints that frame's passes).
     void OnSwap(uint64_t frame);

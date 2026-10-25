@@ -792,8 +792,29 @@ namespace ui
                 s_describedCheat = -2;
         }
 
+        // Settings > Game > Take Photo: the menu closes, and the next frame's
+        // scene is saved without its HUD (ui/photo.cpp; F12 in the game).
+        void PhotoRow(float valueWidth)
+        {
+            bool described = false;
+            if (ActionRow("photo", "Take Photo (F12)", "Take", valueWidth, described))
+            {
+                CloseSettings();
+                TakePhoto();
+            }
+            if (described)
+                s_describedCheat = -3;
+        }
+
         void HelpLine()
         {
+            if (s_describedCheat == -3)
+            {
+                ImGui::TextWrapped("Saves the next frame as the game draws it, without the HUD or any menu over it, at the internal "
+                                   "resolution, as a PNG in the data folder's photos. Pause the game first: its pause menu stays out of it.");
+                ImGui::TextDisabled("A: take one now (the menu closes). In the game: F12.");
+                return;
+            }
             if (s_describedCheat != -1)
             {
                 const std::vector<game::cheats::Cheat> list = game::cheats::List();
@@ -1162,7 +1183,10 @@ namespace ui
                             OnlineTextRow(1, valueWidth);
                         }
                         if (category == Category::Game)
+                        {
+                            PhotoRow(valueWidth);
                             CheatRows(valueWidth);
+                        }
                         ImGui::EndTable();
                     }
                     ImGui::PopStyleVar();

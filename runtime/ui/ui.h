@@ -95,6 +95,9 @@ namespace ui
     // seconds (a settings file that didn't load, a save that failed, where a
     // bug report went). Several take turns.
     void Toast(std::string text, double seconds = 8.0);
+    // Any thread: a photo of the next frame's scene, without the HUD or the
+    // menus over it, saved as a PNG (ui/photo.cpp). F12 does it too.
+    void TakePhoto();
     // Any thread: takes down the toast with this text, showing or waiting
     // its turn, once it no longer holds (a controller connected). None:
     // nothing.
