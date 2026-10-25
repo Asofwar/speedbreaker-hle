@@ -536,5 +536,12 @@ So the choice is made elsewhere: by a generator of the game's own with another f
   words differ between the runs, almost all geometry, streaming indices and floats; no small set follows the paint. The scripted preset rides (`sub_824EF790`, AndhikaFW's first
   approach) are the game's named cars (the Blacklist's), not a car's stock look.
 - Meanwhile a player's own race car became the stock one (the SKIPFE path, see the lobby car), which looks the same in every run (a red RX-8, a black Supra), so what's missing is
-  making an opponent come out stock too. Next, if picked up: find where the SKIPFE path's request (the key from `sub_8214abb0` at 208(r1) in `sub_824729E0`, then `sub_82472878`)
-  differs from an opponent's (the racer collection in `sub_82333680`), and give a player's opponent the stock request.
+  making an opponent come out stock too.
+- Not a shader constant: the pixel shaders' c0..c63 of one frame in three runs (yellow-green, turquoise, dark red RX-8, the same scene) differ only in one scalar that follows
+  the draw order; so the paint and vinyl are in a texture (the car's skin is put together when it is made).
+- The RX-8's type key (0D928DCA F667ABA4) is in three places 5 s after the pool is made: its template (BAB575F0), a record at BBE32300 (the same address every run) and one more
+  block. In the record, the only word that isn't a pointer and differs between runs is the one 76 bytes after the key (2EC33B84, 40CE4984, 464DB15E: a random number). It is 0
+  while `sub_82333680` returns and filled during the vehicle's creation (7D3E2819 one frame later); holding it at one value from then on (600 frames) left the paint random (grey
+  and blue in two runs with the same value). So the paint is picked in the same call that writes that number, from the same generator.
+- Next, if picked up: find the writer of record+76 inside the creation (a store watch on that address, or the creation's calls logged), which leads to the game's own generator;
+  seed it from the player's id and car while a player's opponent is made, and every machine picks the same paint (the owner's own needs the owner's choice sent along).
