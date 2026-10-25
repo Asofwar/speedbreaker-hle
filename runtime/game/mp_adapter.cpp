@@ -340,6 +340,29 @@ namespace
                 }
                 tpDone = true;
             }
+        // The open world: every game's dev start puts its car on the same spot (body axes -2148.4, 153, 981.9, facing a house across the road), so two players
+        // started inside each other and their collision threw them off. Three seconds in, once, a car still there moves along the road (body +z there) by its rank
+        // among the players' ids on the server: 0, +10 m, -10 m, +20 m, ...
+        static bool spreadDone = false;
+        if (a.world && !spreadDone && a.localObj && obj == a.localObj && a.net && a.net->Connected() && a.Now() - a.localSince > 3.0)
+            if (const uint32_t pb = PhysBody(base, obj))
+            {
+                spreadDone = true;
+                int rank = 0;
+                for (const auto& [id, r] : a.net->Remotes())
+                    if (id < a.net->MyId())
+                        ++rank;
+                Phys ph = ReadPhys(base, pb);
+                const float dx = ph.pos[0] + 2148.4f, dz = ph.pos[2] - 981.9f;
+                if (rank > 0 && dx * dx + dz * dz < 30.f * 30.f)
+                {
+                    const float along = 10.f * float((rank + 1) / 2) * (rank % 2 ? 1.f : -1.f);
+                    ph.pos[2] += along;
+                    ph.vel[0] = ph.vel[1] = ph.vel[2] = 0;
+                    WritePhys(base, pb, ph);
+                    fprintf(stderr, "[mp] spawn spread: player rank %d, the car moved %+.0f m along the road\n", rank, double(along));
+                }
+            }
         if (a.parked.count(obj))
         {
             if (const uint32_t pb = PhysBody(base, obj))
