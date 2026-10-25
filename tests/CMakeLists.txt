@@ -14,11 +14,19 @@
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(RT ${ROOT}/runtime)
 find_package(Threads REQUIRED)
+# toml++ where tools/XenonRecomp isn't checked out (CI): an installed copy.
+# Homebrew's LLVM doesn't search Homebrew's include folder by itself.
+if(NOT EXISTS ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include/toml++/toml.hpp)
+    find_path(SB_TOML_INCLUDE toml++/toml.hpp HINTS /opt/homebrew/include /usr/local/include)
+endif()
 
 function(sb_test name)
     cmake_parse_arguments(T "" "" "SOURCES;ARGS;LABELS" ${ARGN})
     add_executable(${name} ${CMAKE_CURRENT_SOURCE_DIR}/${name}.cpp ${T_SOURCES})
     target_include_directories(${name} PRIVATE ${RT})
+    if(SB_TOML_INCLUDE)
+        target_include_directories(${name} SYSTEM PRIVATE ${SB_TOML_INCLUDE})
+    endif()
     target_link_libraries(${name} PRIVATE Threads::Threads)
     if(SB_MSVC_FRONTEND)
         target_compile_options(${name} PRIVATE /O2 -UNDEBUG)
