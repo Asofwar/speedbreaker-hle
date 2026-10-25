@@ -651,11 +651,17 @@ namespace
             }
         }
 
-        // Arm the start barrier once the race script has finished creating the opponents (none created for 0.5 s after the first), or after 5 s if it creates none.
+        // Arm the start barrier once the race script has finished creating the opponents (none created for 0.5 s after the first). None within 5 s: not a race the
+        // others can be in (they drive its opponents), such as free roam (career, the dev start), so nothing is held: holding it froze free roam until B.
         if (a.barrierPending && a.localObj)
         {
             const int made = game::OpponentsCreated();
-            if ((made > 0 && game::SecondsSinceLastOpponent() > 0.5) || (made == 0 && now - a.barrierPendingSince > 5.0))
+            if (made == 0 && now - a.barrierPendingSince > 5.0)
+            {
+                a.barrierPending = false;
+                fprintf(stderr, "[mp] no opponents 5 s after the player's car: free roam or a race without opponents, not held for the others\n");
+            }
+            else if (made > 0 && game::SecondsSinceLastOpponent() > 0.5)
             {
                 a.barrierPending = false;
                 a.barrier = true;
