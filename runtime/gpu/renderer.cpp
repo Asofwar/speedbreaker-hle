@@ -9261,7 +9261,8 @@ void main()
         // next draw or resolve copies it, before anything is drawn over it).
         std::mutex s_photoMutex;
         FrontPixels s_photoDone;
-        uint64_t s_photoAsked = 0;  // s_frame when asked
+        std::atomic<bool> s_photoWanted{ false };  // s_photoDone is set (read by the command processor without the lock)
+        uint64_t s_photoAsked = UINT64_MAX;  // s_frame at the first swap after the ask (command processor)
         RenderTarget* s_photoSource = nullptr;
         void TakeScenePhoto();
 
@@ -12877,9 +12878,8 @@ void main()
         // samples scaled textures (every attachment shares the pitch, so the scale).
         // A photo asked for: the final grade's target, copied before the
         // next draw or resolve (TakeScenePhoto).
-        if (s_photoDone && (s_ps->hash == kGradeShaderHashes[0] || s_ps->hash == kGradeShaderHashes[1]))
-            LogOnce(0x9070, "photo: the final grade drawn into %s", color[0] ? "a colour target" : "no colour target");
-        if (s_photoDone && color[0] && (s_ps->hash == kGradeShaderHashes[0] || s_ps->hash == kGradeShaderHashes[1]))
+        if (s_photoWanted.load(std::memory_order_acquire) && color[0] &&
+            (s_ps->hash == kGradeShaderHashes[0] || s_ps->hash == kGradeShaderHashes[1]))
         {
             std::lock_guard lock(s_photoMutex);
             if (s_photoDone)
@@ -15577,7 +15577,7 @@ void main()
             return;
         }
         s_photoDone = std::move(done);
-        s_photoAsked = s_frame;
+        s_photoWanted.store(true, std::memory_order_release);
     }
 
     namespace
@@ -15594,6 +15594,8 @@ void main()
                 std::lock_guard lock(s_photoMutex);
                 done = std::move(s_photoDone);
                 s_photoDone = nullptr;
+                s_photoWanted.store(false, std::memory_order_release);
+                s_photoAsked = UINT64_MAX;
             }
             if (!done)
                 return;
@@ -15754,10 +15756,14 @@ void main()
         {
             // A photo asked for a second ago with no final grade since: none.
             std::lock_guard lock(s_photoMutex);
+            if (s_photoDone && s_photoAsked == UINT64_MAX)
+                s_photoAsked = s_frame;
             if (s_photoDone && s_frame > s_photoAsked + 60)
             {
                 FrontPixels done = std::move(s_photoDone);
                 s_photoDone = nullptr;
+                s_photoWanted.store(false, std::memory_order_release);
+                s_photoAsked = UINT64_MAX;
                 std::thread([done = std::move(done)] { done(nullptr, 0, 0); }).detach();
             }
         }

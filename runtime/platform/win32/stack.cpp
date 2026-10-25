@@ -395,6 +395,18 @@ namespace platform::stack
             DWORD64 imageBase = 0;
             if (PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(c.Rip, &imageBase, nullptr))
             {
+#if !defined(_MSC_VER)
+                // MinGW-w64 (the fork's build) has no SEH to catch a read past
+                // the copy: a step is taken only where it reads inside it,
+                // its frame (a margin above rsp) and its frame register
+                // (UNWIND_INFO's fourth byte, low bits; the register's
+                // number is its place in `registers`) in the copied part.
+                constexpr uintptr_t kFrameMargin = 32 * 1024;
+                const uint8_t frameRegister = reinterpret_cast<const uint8_t*>(imageBase + function->UnwindData)[3] & 0xF;
+                if (sp + kFrameMargin > high ||
+                    (frameRegister && (*registers[frameRegister] < low || *registers[frameRegister] >= high)))
+                    break;
+#endif
                 for (DWORD64* r : registers)
                     if (*r >= low && *r < high)
                         *r = *r - low + copy;

@@ -117,6 +117,11 @@ foreach(_sb_lang C CXX)
 endforeach()
 
 if(WIN32 AND SB_MSVC_FRONTEND)
+    # This fork builds Windows with MinGW-w64 only: its online play, the GPU
+    # thread's doorbells and its save files take compat/win, which clang-cl's
+    # build (upstream's) doesn't have.
+    message(FATAL_ERROR "This fork's Windows build is the MinGW-w64 cross-build (scripts/windows/build.sh, docs/windows.md); "
+        "upstream's clang-cl preset is not supported here")
     # One self-contained exe: the static C/C++ runtime (/MT) in every
     # configuration, which every dependency must match (lld-link refuses a
     # mix).

@@ -335,8 +335,11 @@ namespace install
         if (!profile.empty())
             add(profile / "Games");
         for (const platform::Drive& drive : platform::Drives())
+        {
             if (!drive.system)
                 add(drive.root);
+            add(drive.root / "Games");  // (D:\Games, an SD card's: where an .iso is often kept)
+        }
 #else
         if (const char* home = std::getenv("HOME"); home && *home)
         {

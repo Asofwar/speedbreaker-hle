@@ -27,7 +27,7 @@ namespace
 
 namespace platform
 {
-    int StartThread(Thread* thread, size_t stackSize, void* (*fn)(void*), void* arg)
+    int StartThread(Thread* thread, size_t stackSize, void* (*fn)(void*), void* arg, size_t)  // (Windows probes big frames: __chkstk)
     {
         auto* start = new Start{ fn, arg };
         // _beginthreadex, not CreateThread: the C runtime's per-thread state

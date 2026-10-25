@@ -9,6 +9,9 @@
 //   SpeedBreaker --install <image>     and the other commands in install/install_cli.h
 
 #include "stdafx.h"
+#ifdef _WIN32
+#include <compat/win/win_sys.h>
+#endif
 #include "kernel/arena.h"
 #include "kernel/memory_status.h"
 #include "kernel/module.h"
@@ -363,6 +366,11 @@ int main(int argc, char** argv)
     // (platform/timer.h).
     platform::PrepareProcess();
     platform::RaiseTimerResolution();
+#ifdef _WIN32
+    // And no power throttling (compat/win): the 1 ms timer kept while the
+    // window is occluded or minimized, no EcoQoS for a game in the background.
+    winsys::PreciseTimers();
+#endif
 #if defined(__APPLE__) && TARGET_OS_IOS
     // iOS starts an app in /, which it can't write. Relative paths (test
     // output in build/, a ./game/files development copy) mean the app's
@@ -723,12 +731,12 @@ int main(int argc, char** argv)
         params.stackSize = std::max<uint32_t>(*stack, DEFAULT_GUEST_STACK);
 
     platform::Thread thread{};
-    if (const int created = platform::StartThread(&thread, HOST_STACK, GuestMain, &params); created != 0)
+    if (const int created = platform::StartThread(&thread, HOST_STACK, GuestMain, &params, kHostStackGuardSize); created != 0)
     {
         // No game thread (its stack refused): said, rather than a window
         // that stays black for good.
-        std::string why = std::format("The system refused to start the game's main thread (error {}).", created);
-        fprintf(stderr, "[runtime] can't start: the game's main thread: error %d\n", created);
+        std::string why = std::format("The system refused to start the game's main thread ({}).", strerror(created));
+        fprintf(stderr, "[runtime] can't start: the game's main thread: error %d (%s)\n", created, strerror(created));
         ShowStartupError("SpeedBreaker can't start", { why, "Close other programs and try again." }, "", windowed);
         if (windowed)
             video::Shutdown();

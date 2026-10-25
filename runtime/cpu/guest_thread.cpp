@@ -156,12 +156,12 @@ GuestThreadHandle::GuestThreadHandle(const GuestThreadParams& params)
 #ifdef USE_PTHREAD
 {
     refs = 2;  // SpeedBreaker: the handle's reference + the thread's own
-    const auto ret = platform::StartThread(&thread, GetStackSize(), GuestThreadFunc, this);
+    const auto ret = platform::StartThread(&thread, GetStackSize(), GuestThreadFunc, this, kHostStackGuardSize);
     if (ret != 0) {
         // SpeedBreaker: no thread will ever run or signal this handle; the
         // creator (GuestThread::Start) destroys it and ExCreateThread fails,
         // instead of handing the guest a thread anything waiting on hangs.
-        fprintf(stderr, "[thread] can't start guest thread %u (start %08X): error %d\n", id, params.function, ret);
+        fprintf(stderr, "[thread] can't start guest thread %u (start %08X): error %d (%s)\n", id, params.function, ret, strerror(ret));
         return;
     }
     started = true;

@@ -27,9 +27,12 @@ namespace platform
     using Thread = pthread_t;
 #endif
 
-    // Starts fn(arg) on a new thread with `stackSize` bytes of stack.
-    // Returns 0, or the error (pthread_create's; Windows: GetLastError()).
-    int StartThread(Thread* thread, size_t stackSize, void* (*fn)(void*), void* arg);
+    // Starts fn(arg) on a new thread with `stackSize` bytes of stack and,
+    // on POSIX, `guardSize` bytes of guard below it (0: the system's one
+    // page; a guest frame of 10-28 KB jumps a page: guest_thread.h's
+    // kHostStackGuardSize). Returns 0, or the error (pthread_create's;
+    // Windows: GetLastError()).
+    int StartThread(Thread* thread, size_t stackSize, void* (*fn)(void*), void* arg, size_t guardSize = 0);
     // Lets the thread run on its own: nothing joins it, its resources go
     // when it ends.
     void DetachThread(Thread thread);
@@ -40,12 +43,16 @@ namespace platform
     void NameCurrentThread(const char* name);
 
 #ifndef _WIN32
-    inline int StartThread(Thread* thread, size_t stackSize, void* (*fn)(void*), void* arg)
+    inline int StartThread(Thread* thread, size_t stackSize, void* (*fn)(void*), void* arg, size_t guardSize)
     {
         pthread_attr_t attr;
         pthread_attr_init(&attr);
         pthread_attr_setstacksize(&attr, stackSize);
-        return pthread_create(thread, &attr, fn, arg);
+        if (guardSize)
+            pthread_attr_setguardsize(&attr, guardSize);
+        const int result = pthread_create(thread, &attr, fn, arg);
+        pthread_attr_destroy(&attr);
+        return result;
     }
 
     inline void DetachThread(Thread thread)
