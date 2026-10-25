@@ -14,8 +14,16 @@ namespace game
         std::string label;
         int kind = 0;           // 0 a race's start marker, 1 the next checkpoint, 2 a later one
     };
+    struct MpHudTag
+    {
+        float p[3] = {};        // the car's position, body axes as the markers
+        std::string name;
+    };
     struct MpHud
     {
+        std::vector<MpHudTag> tags;       // the other players' names over their cars
+        std::vector<std::string> chat;    // the latest chat lines, oldest first (bottom left)
+        float projX = 0, projY = 0;       // the player's projection (game::PlayerProjection), 0: not known
         std::vector<std::string> lines;   // panel, top left
         std::string banner;               // big, top centre (countdown, "GO", ...)
         std::vector<MpHudMarker> markers;

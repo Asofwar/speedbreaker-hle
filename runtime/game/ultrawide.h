@@ -37,6 +37,11 @@ namespace game
     // The front-end (HUD and menu) matrix's x and y scales as
     // UltrawideFrontEnd last left them (0 before the first front-end frame):
     // the renderer recognises front-end draws by them.
+    // The player's camera (view 1) as its projection was last built, after
+    // the Hor+/Vert+ scales and Settings > Display > Field of View: 1 / tan
+    // of half the horizontal and the vertical field of view. False until the
+    // view has been built (ui/mp_overlay.cpp then assumes one).
+    bool PlayerProjection(float& x, float& y);
     float FrontEndScaleX();
     float FrontEndScaleY();
 }

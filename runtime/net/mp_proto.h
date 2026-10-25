@@ -2,6 +2,7 @@
 // one-byte type followed by its body. Unreliable messages go on channel 0 (car states, snapshots), reliable ones on
 // channel 1 (join, leave, chat, events). Bump kProtocolVersion on any change.
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -10,7 +11,9 @@
 namespace mp
 {
     constexpr uint16_t kDefaultPort = 27960;
-    constexpr uint32_t kProtocolVersion = 6;
+    constexpr uint32_t kProtocolVersion = 7;
+    constexpr size_t kMaxChat = 160;        // a chat line's characters (Writer::text)
+    constexpr uint8_t kServerId = 0xFF;     // Chat's sender id for the server's own lines (its console)
     constexpr int kMaxPlayers = 16;
     constexpr int kChanState = 0;   // unreliable, latest wins
     constexpr int kChanEvent = 1;   // reliable, ordered
@@ -25,7 +28,7 @@ namespace mp
         PlayerLeave,    // S->C reliable: id
         CarState,       // C->S unreliable: the sender's car
         Snapshot,       // S->C unreliable: every other player's latest car, one message per server tick
-        Chat,           // both ways reliable
+        Chat,           // C->S reliable: text; S->C reliable: sender id (kServerId: the server), text. Up to kMaxChat printable ASCII characters
         PlayerInfo,     // C->S reliable: the car I chose in the lobby (type key, 0: none) and whether I am ready to race; S->C reliable: id, car key, ready
         Hold,           // C->S reliable: my game is held at the start of a race: players the race needs (u8), my world clock (f32)
         Unhold,         // C->S reliable: I leave the start barrier without a Go (cancelled, or the race was left)
@@ -92,6 +95,13 @@ namespace mp
         {
             u8(uint8_t(s.size() > 31 ? 31 : s.size()));
             b.insert(b.end(), s.begin(), s.begin() + (s.size() > 31 ? 31 : s.size()));
+        }
+        // A longer string (chat), up to `max` bytes; Reader::str reads it.
+        void text(const std::string& s, size_t max = kMaxChat)
+        {
+            const size_t n = std::min<size_t>({ s.size(), max, 255 });
+            u8(uint8_t(n));
+            b.insert(b.end(), s.begin(), s.begin() + n);
         }
         void car(const CarState& c)
         {

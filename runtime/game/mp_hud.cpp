@@ -14,7 +14,7 @@ namespace game
     void MpHudPublish(MpHud&& hud)
     {
         std::lock_guard<std::mutex> g(g_mutex);
-        g_have = !hud.lines.empty() || !hud.banner.empty() || !hud.markers.empty();
+        g_have = !hud.lines.empty() || !hud.banner.empty() || !hud.markers.empty() || !hud.tags.empty() || !hud.chat.empty();
         g_hud = std::move(hud);
         g_active = g_have;
     }

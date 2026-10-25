@@ -214,8 +214,10 @@ namespace mp
                 std::string text = r.str();
                 if (!r.ok()) return;
                 for (char& ch : text) if (ch < 32 || ch >= 127) ch = '?';
-                Writer w(Msg::Chat); w.u8(pl->id); w.str(text);
+                if (text.empty()) return;
+                Writer w(Msg::Chat); w.u8(pl->id); w.text(text);
                 Broadcast(kChanEvent, w, true);
+                fprintf(stderr, "[mp-server] chat %s: %s\n", pl->name.c_str(), text.c_str());
             }
         }
         void OnDisconnect(ENetPeer* peer)
@@ -328,5 +330,31 @@ namespace mp
     }
     int Server::RaceCount() const { return int(m->race.Races().size()); }
     int Server::PlayerCount() const { return int(m->players.size()); }
+
+    void Server::Say(const std::string& text)
+    {
+        std::string line;
+        for (char ch : text)
+            if (line.size() < kMaxChat)
+                line += (ch >= 32 && ch < 127) ? ch : '?';
+        if (line.empty())
+            return;
+        Writer w(Msg::Chat); w.u8(kServerId); w.text(line);
+        m->Broadcast(kChanEvent, w, true);
+        fprintf(stderr, "[mp-server] chat server: %s\n", line.c_str());
+    }
+
+    std::string Server::Players() const
+    {
+        std::string out;
+        for (const auto& [id, pl] : m->players)
+        {
+            char b[160];
+            snprintf(b, sizeof b, "  %u %s: car %016llx, %s%s\n", unsigned(id), pl.name.c_str(), (unsigned long long)pl.carKey, pl.ready ? "ready" : "not ready",
+                pl.hasCar ? ", driving" : "");
+            out += b;
+        }
+        return out.empty() ? std::string("  (no players)\n") : out;
+    }
     uint16_t Server::Port() const { return m->port; }
 }

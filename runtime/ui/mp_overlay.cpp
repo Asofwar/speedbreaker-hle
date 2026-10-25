@@ -1,7 +1,9 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING).
 //
 // The open world race over the game's picture: a text panel, the countdown banner and markers (the start marker, the next checkpoints) projected from the game's camera.
-// The data is game/mp_hud.h's. The projection assumes the game's vertical field of view (NFSMW_MP_FOV, degrees, to adjust) and the picture the UI's work area.
+// The other players' names over their cars and the chat's latest lines, in races too.
+// The data is game/mp_hud.h's. The projection is the player's camera's own (game::PlayerProjection: the field of view, the screen's shape), the picture
+// the UI's work area; before the game has built it, a vertical field of view of 55 degrees (NFSMW_MP_FOV, degrees, to change).
 #include <stdafx.h>
 #include "ui.h"
 
@@ -34,8 +36,8 @@ namespace ui
             if (depth < 1.f) return false;
             const float xc = v[0] * r[0] + v[1] * r[1] + v[2] * r[2];
             const float yc = v[0] * u[0] + v[1] * u[1] + v[2] * u[2];
-            const float ty = std::tan(vfovDeg * 3.14159265f / 360.f);
-            const float tx = ty * size.x / size.y;
+            const float ty = h.projY > 0 ? 1.f / h.projY : std::tan(vfovDeg * 3.14159265f / 360.f);
+            const float tx = h.projX > 0 ? 1.f / h.projX : ty * size.x / size.y;
             out = ImVec2(origin.x + size.x * (0.5f + 0.5f * xc / (depth * tx)), origin.y + size.y * (0.5f - 0.5f * yc / (depth * ty)));
             return true;
         }
@@ -71,6 +73,33 @@ namespace ui
                 const ImVec2 ts = ImGui::CalcTextSize(buf);
                 dl->AddText(ImVec2(top2.x - ts.x * 0.5f, top2.y - rad - ts.y - 2.f), col, buf);
             }
+
+        // The other players' names over their cars, fading with distance (none past 400 m).
+        if (h.camValid)
+            for (const game::MpHudTag& t : h.tags)
+            {
+                ImVec2 at;
+                float d = 0;
+                if (!Project(h, t.p, vfov, work, size, at, d) || d > 400.f)
+                    continue;
+                const int alpha = int(255.f * std::clamp(1.2f - d / 400.f, 0.25f, 1.f));
+                const ImVec2 ts = ImGui::CalcTextSize(t.name.c_str());
+                const ImVec2 p0(at.x - ts.x * 0.5f - 5.f, at.y - ts.y - 4.f), p1(at.x + ts.x * 0.5f + 5.f, at.y);
+                dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, alpha * 140 / 255), 4.f);
+                dl->AddText(ImVec2(p0.x + 5.f, p0.y + 2.f), IM_COL32(255, 255, 255, alpha), t.name.c_str());
+            }
+
+        // The chat, bottom left.
+        {
+            float cy = work.y + size.y * 0.6f;  // (above the minimap)
+            for (auto it = h.chat.rbegin(); it != h.chat.rend(); ++it)
+            {
+                const ImVec2 ts = ImGui::CalcTextSize(it->c_str());
+                cy -= ts.y + 6.f;
+                dl->AddRectFilled(ImVec2(work.x + 10.f * s, cy), ImVec2(work.x + 10.f * s + ts.x + 12.f, cy + ts.y + 4.f), IM_COL32(0, 0, 0, 150), 4.f);
+                dl->AddText(ImVec2(work.x + 16.f * s, cy + 2.f), IM_COL32(200, 235, 255, 245), it->c_str());
+            }
+        }
 
         // The panel, top left of the picture.
         float y = work.y + 90.f * s;

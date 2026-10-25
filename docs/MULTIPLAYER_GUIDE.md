@@ -15,7 +15,8 @@ appear as the race's opponents (they take over the AI cars). Career mode is not 
 ```
 build/main/runtime/mp_server 27960
 ```
-It prints a line when a player joins or leaves. Leave it running.
+It prints a line when a player joins or leaves, and every chat line. Leave it running. What you type into it goes to every player as a chat line from "server"; `/players` lists who
+is on (name, car, ready), `/help` the commands.
 
 ## Join
 Open the settings (F1, or Back + Start on a pad), the **Online** page, section *Multiplayer races*:
@@ -34,6 +35,10 @@ the same car** as in the lobby: your own car cannot be set from outside, so if t
 choices have to be made before the race loads (a car swapped in late is not drawn). The players list shows who is ready, with their cars, and who is still in the menus. Not ready any
 more after each race. The number of players the start waits for is the number of ready players (or the number in the settings if you are not ready).
 
+## Chat
+On the settings page (Online > *Multiplayer races*), under the players: type a line and press Enter or **Send**. Every player sees it there and, for 15 seconds, over the game (left, above
+the minimap), also during a race. Use it to agree the race: the track, the direction, the laps.
+
 ## Race
 1. Every player starts **the same race**: the same mode, **the same track and direction**, with at least as many opponents as there are other players (the other players take over the first
    opponents). Choose it in Quick Race > Custom Race; Quick Play picks a random track.
@@ -44,11 +49,12 @@ more after each race. The number of players the start waits for is the number of
 4. Race. When the race is over (quit to the menu, or finish), your game leaves the server; start the next race the same way.
 
 ## Limits
-- Other players are listed by name in the standings (during and after the race: up to ten capital letters, digits, space, `-` and `_`); there are no name tags over the cars. They show on the
-  minimap like the game's own opponents (checked with a stand-in player on one machine). Your own car has to be chosen twice, in the lobby and in the car selection.
+- Other players are listed by name in the standings (during and after the race: up to ten capital letters, digits, space, `-` and `_`), and their names show over their cars (up to 400 m away,
+  also through walls). They show on the minimap like the game's own opponents (checked with a stand-in player on one machine). Your own car has to be chosen twice, in the lobby and in
+  the car selection.
 - Opponent cars look the same model on every machine, but paint, wheels, spoilers and vinyls are the game's random ones for that car, not the owner's own.
 - Laps and finishing places are the game's own (computed on each machine from where the cars are); the times in the standings can differ between machines.
-- The lobby sets cars and who is ready, not the race: the players agree the track and mode outside the game.
+- The lobby sets cars and who is ready, not the race: the players agree the track and mode in the chat.
 - Basic protection only: the server and every game drop car states that are not finite or are far outside what a car can do, limit one player to 120 states a second, clean player names, and
   disconnect a connection that does not say hello within five seconds. A modified client can still cheat with its own car (each game is trusted with it); there are no accounts or passwords.
 
@@ -67,4 +73,5 @@ Instead of everyone starting the same race from the menus, the game starts strai
 - **A race**: drive to a start marker and **stop in it** for a second and a half. The race opens for 15 s: other players join the same way. Then a 5 s countdown (3.. 2.. 1.. GO!), checkpoints in order (the next
   two are marked), laps, then the places and times. All of this is decided by the server from the positions the games report. Players who are not in the race drive in the same world and can get in the way.
 - **Limits**: at most six other cars in the world at once. A player who joins after your world has loaded is drawn with a car of the pool (their own car if it is one of the cars the players on the server had when your world loaded, else another model).
-  Names above cars, the game's own HUD for the race, and a different car after the world has started are not there yet. The marker's size on screen uses an assumed field of view (`NFSMW_MP_FOV` to adjust).
+  The game's own HUD for the race and a different car after the world has started are not there yet. Markers and names are placed with the game's own camera projection (Field of View
+  and the screen's shape included).

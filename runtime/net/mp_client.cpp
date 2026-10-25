@@ -344,7 +344,7 @@ namespace mp
 
     void Client::SendChat(const std::string& text)
     {
-        Writer w(Msg::Chat); w.str(text);
+        Writer w(Msg::Chat); w.text(text);
         m->Send(kChanEvent, w, true);
     }
 

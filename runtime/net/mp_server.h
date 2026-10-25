@@ -18,6 +18,10 @@ namespace mp
         bool LoadRaces(const std::string& path);
         int RaceCount() const;
         int PlayerCount() const;
+        // The server's own chat line, to every player (shown as "server"). Call from the thread that runs Service.
+        void Say(const std::string& text);
+        // One line per player: id, name, the car it chose, ready or not.
+        std::string Players() const;
         uint16_t Port() const;
     private:
         struct Impl;

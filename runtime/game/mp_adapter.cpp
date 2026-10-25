@@ -17,6 +17,7 @@
 #include "mp_adapter.h"
 #include "mp_hud.h"
 #include "world_mode.h"
+#include "ultrawide.h"
 #include <algorithm>
 #include <cstring>
 #include <hid/input.h>
@@ -52,6 +53,12 @@ namespace
     std::mutex g_statusMutex;
     std::string g_status = "Multiplayer is off.";
     std::vector<game::MpPlayer> g_players;
+
+    // Chat: lines to send (from the settings page), and the latest lines received, with when (steady clock seconds) for the overlay.
+    std::mutex g_chatMutex;
+    std::vector<std::string> g_chatOut;
+    std::deque<std::pair<double, std::string>> g_chatLog;
+    double ChatNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
     constexpr uint32_t kBodyListHead = 0x8290BE18;
     // The game's vehicle table: a fixed vector at 0x82C745A8 ({vtable, data, capacity in bytes, count}, data = 8-byte entries {owner object, 1}), the player first,
@@ -392,15 +399,48 @@ namespace
             return;
         a.lastHud = now;
         mp::Client* net = a.net.get();
-        if (!net || !net->Connected() || !a.localObj)
+        if (!net || !net->Connected())
         {
             game::MpHudPublish({});
             return;
         }
+        game::MpHud h;
+        {
+            // The chat lines of the last 15 s (at most 6).
+            std::lock_guard<std::mutex> g(g_chatMutex);
+            const double t = ChatNow();
+            for (const auto& [at, line] : g_chatLog)
+                if (t - at < 15.0)
+                    h.chat.push_back(line);
+            if (h.chat.size() > 6)
+                h.chat.erase(h.chat.begin(), h.chat.end() - 6);
+        }
+        if (!a.localObj)
+        {
+            game::MpHudPublish(std::move(h));
+            return;
+        }
+        h.camValid = true;
+        for (int i = 0; i < 3; ++i) { h.eye[i] = LoadF(base, 0x82A2DAC0 + 4 * i); h.fwd[i] = LoadF(base, 0x82A2DAE0 + 4 * i); }
+        game::PlayerProjection(h.projX, h.projY);
+        // The other players' names over the cars that stand for them (a race's opponents, the open world's vehicles), where they are drawn.
+        for (const auto& [id, obj] : a.standIns)
+        {
+            const uint32_t pb = PhysBody(base, obj);
+            const auto it = net->Remotes().find(id);
+            if (!pb || it == net->Remotes().end())
+                continue;
+            const Phys ph = ReadPhys(base, pb);
+            game::MpHudTag t;
+            for (int i = 0; i < 3; ++i) t.p[i] = ph.pos[i];
+            t.p[1] += 1.3f;
+            t.name = it->second.name.empty() ? "player " + std::to_string(id) : it->second.name;
+            h.tags.push_back(std::move(t));
+        }
         const std::vector<mp::RaceDef> races = net->Races();
         if (races.empty())
         {
-            game::MpHudPublish({});
+            game::MpHudPublish(std::move(h));
             return;
         }
         const mp::RaceView v = net->CurrentRace();
@@ -418,10 +458,6 @@ namespace
             for (int i = 0; i < 3; ++i) mine[i] = ph.pos[i];
         }
         auto distTo = [&](const mp::Vec3& p) { const float dx = p.x - mine[0], dz = p.z - mine[2]; return std::sqrt(dx * dx + dz * dz); };
-
-        game::MpHud h;
-        h.camValid = true;
-        for (int i = 0; i < 3; ++i) { h.eye[i] = LoadF(base, 0x82A2DAC0 + 4 * i); h.fwd[i] = LoadF(base, 0x82A2DAE0 + 4 * i); }
 
         const mp::RacerView* my = nullptr;
         for (const mp::RacerView& r : v.racers)
@@ -610,6 +646,19 @@ namespace
         if (!a.net)
         {
             a.net.reset(new mp::Client);
+            a.net->onChat = [&a](uint8_t id, const std::string& text) {
+                std::string who = id == mp::kServerId ? std::string("server") : id == a.net->MyId() ? a.name : std::string();
+                if (who.empty())
+                {
+                    const auto it = a.net->Remotes().find(id);
+                    who = it == a.net->Remotes().end() || it->second.name.empty() ? "player " + std::to_string(id) : it->second.name;
+                }
+                fprintf(stderr, "[mp] chat %s: %s\n", who.c_str(), text.c_str());
+                std::lock_guard<std::mutex> g(g_chatMutex);
+                g_chatLog.emplace_back(ChatNow(), who + ": " + text);
+                while (g_chatLog.size() > 50)
+                    g_chatLog.pop_front();
+            };
             const std::string host = ParseHostPort(a.server, port)[0];
             if (!a.net->Connect(host, port, a.name))
                 fprintf(stderr, "[mp] cannot connect to %s\n", a.server.c_str());
@@ -626,6 +675,16 @@ namespace
             a.net->Disconnect();
             a.net->Connect(host, port, a.name);
             fprintf(stderr, "[mp] connection lost, reconnecting to %s\n", a.server.c_str());
+        }
+        if (a.net->Connected())
+        {
+            std::vector<std::string> out;
+            {
+                std::lock_guard<std::mutex> g(g_chatMutex);
+                out.swap(g_chatOut);
+            }
+            for (const std::string& line : out)
+                a.net->SendChat(line);
         }
         if (a.net->Connected() && (a.pushedReady != g_lobbyReady.load() || a.pushedCar != g_lobbyCar.load()))
         {
@@ -1032,6 +1091,28 @@ PPC_FUNC(sub_82420FC0)
 // For the settings page (ui/online_menu.cpp), any thread.
 namespace game
 {
+    void MpSendChat(const std::string& text)
+    {
+        std::string line;
+        for (char ch : text)
+            if (line.size() < mp::kMaxChat)
+                line += (ch >= 32 && ch < 127) ? ch : '?';
+        if (line.find_first_not_of(' ') == std::string::npos)
+            return;
+        std::lock_guard<std::mutex> g(g_chatMutex);
+        if (g_chatOut.size() < 8)
+            g_chatOut.push_back(std::move(line));
+    }
+
+    std::vector<std::string> MpChatLog()
+    {
+        std::lock_guard<std::mutex> g(g_chatMutex);
+        std::vector<std::string> out;
+        for (const auto& [at, line] : g_chatLog)
+            out.push_back(line);
+        return out;
+    }
+
     std::string MpStatus()
     {
         std::lock_guard<std::mutex> g(g_statusMutex);

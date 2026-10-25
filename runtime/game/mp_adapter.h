@@ -29,6 +29,11 @@ namespace game
     };
     std::vector<MpPlayer> MpPlayers();
 
+    // Chat with the players on the server (any thread): the line goes out from the game's thread at its next frame. MpChatLog is the latest lines, oldest first,
+    // as "name: text".
+    void MpSendChat(const std::string& text);
+    std::vector<std::string> MpChatLog();
+
     // Open-world mode (game/world_mode.cpp): the other players' cars are made in the game's open world. True when the mode is on (NFSMW_MP_WORLD=1).
     bool MpWorldMode();
     // The next remote player that needs a vehicle in the world: its id and the car's folder name (lower case; a default when it chose none). False if there is none now.

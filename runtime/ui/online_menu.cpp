@@ -101,6 +101,24 @@ namespace ui
                 for (const auto& p : players)
                     ImGui::BulletText("%s%s: %s%s", p.name.c_str(), p.self ? " (you)" : "", p.inRace ? "ready / in a race" : "in the menus", p.car.empty() ? "" : (", " + p.car).c_str());
             }
+            if (!players.empty())
+            {
+                // Chat: agree the race, the track and the direction here (the lobby doesn't set them). The lines show over the game for 15 s too.
+                ImGui::Spacing();
+                ImGui::TextUnformatted("Chat");
+                const std::vector<std::string> log = game::MpChatLog();
+                for (size_t i = log.size() > 8 ? log.size() - 8 : 0; i < log.size(); ++i)
+                    ImGui::TextWrapped("%s", log[i].c_str());
+                static char say[161];
+                ImGui::SetNextItemWidth(-90.f * Scale());
+                const bool enter = ImGui::InputText("##mpsay", say, sizeof say, ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                if ((ImGui::Button("Send") || enter) && say[0])
+                {
+                    game::MpSendChat(say);
+                    say[0] = 0;
+                }
+            }
             if (std::getenv("NFSMW_MP_SERVER") || std::getenv("NFSMW_MP_NAME") || std::getenv("NFSMW_MP_PLAYERS"))
                 ImGui::TextWrapped("(NFSMW_MP_* environment variables are set and override these values.)");
         }
