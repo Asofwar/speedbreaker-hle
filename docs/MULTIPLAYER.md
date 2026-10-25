@@ -513,4 +513,16 @@ Tested with real game clients, not bots (protocol 9):
 - **The start barrier in a real race** (after the free roam fix): two race replays of `race.jlg` (a Quick Race with three AI opponents) at once, multiplayer on with 2 players to wait for. Each
   game was held at the start once its opponents existed, the server released both together, and each gave its first opponent to the other player ("remote player 2 (TWO) drives opponent
   0"). The replays then left their recording (a car driven by another player is not the recorded one), as expected.
-Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN, and the race mode (Quick Race on both) rather than the open world.
+Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN.
+
+### Same paint on every machine: what was tried (2026-10-25, not solved)
+An opponent or pool car of a given model gets a different paint and livery on each machine and in each run (an RX-8 was green, red-black, silver-blue). The aim was the smaller one:
+the same paint for a player on every machine, by making whatever random choice picks it the same. Probed, with the open world's pool (made through `sub_82333680`) and a race
+replay's opponents:
+- The C runtime's `rand()` (`sub_825A9370`, its two-call form `sub_825A9398`; seed at 0x828F6A54): never called while a car is made, nor at all in these runs.
+- The per-thread `rand()` (`sub_826BD8C8`, constant 214013, state at +20 of the thread's data) and its one caller `sub_82469FF8` (next to the vehicle creation code): not called
+  either.
+- The other LCG-looking code (0x19660D in `sub_82722AC0`, 16807 in `sub_82894C38` and its neighbours) is the audio dither and library code; `sub_823B72D0` is the Joylog's read
+  (0 outside a replay), not a generator.
+So the choice is made elsewhere: by a generator of the game's own with another formula, or after creation when the model streams in. Next step, if picked up: watch which words of
+a pool vehicle's object (or its ride/parts record) differ between two runs right after `MakeVehicle`, then find their writer.
