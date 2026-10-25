@@ -175,6 +175,19 @@ sb_test(band_filter_test SOURCES ${RT}/video/picture_fit.cpp)
 # headers compiled in unchanged, the band rules in their code, the
 # presenter's use of them. It writes the GLSL to fsr1_glsl for the check
 # after it.
+# (With SB_TESTS_ONLY runtime/ isn't configured: the header is made here,
+# as runtime/CMakeLists.txt makes it.)
+if(SB_TESTS_ONLY)
+    set(_fsr1 ${RT}/thirdparty/fsr1)
+    set(_fsr1_inc "// Generated from runtime/thirdparty/fsr1 by tests/CMakeLists.txt (SB_TESTS_ONLY). Do not edit.\n")
+    foreach(name ffx_a ffx_fsr1)
+        file(READ ${_fsr1}/${name}.h _fsr1_hex HEX)
+        string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _fsr1_bytes "${_fsr1_hex}")
+        string(APPEND _fsr1_inc "constexpr unsigned char k_${name}[] = { ${_fsr1_bytes}0 };\n")
+    endforeach()
+    file(WRITE ${CMAKE_BINARY_DIR}/runtime/generated/fsr1_headers.inc.new "${_fsr1_inc}")
+    configure_file(${CMAKE_BINARY_DIR}/runtime/generated/fsr1_headers.inc.new ${CMAKE_BINARY_DIR}/runtime/generated/fsr1_headers.inc COPYONLY)
+endif()
 sb_test(fsr1_test SOURCES ${RT}/video/fsr1.cpp ${RT}/video/picture_fit.cpp
     ARGS ${RT}/thirdparty/fsr1 ${RT}/video ${CMAKE_CURRENT_BINARY_DIR}/fsr1_glsl)
 target_include_directories(fsr1_test PRIVATE ${CMAKE_BINARY_DIR}/runtime/generated)
@@ -240,7 +253,10 @@ sb_test(audio_cadence_test)
 # header only; GitHub issue #35: one sound, usually the engine, much quieter
 # until the next gear change): EA's budget rule as a model, the policy, and
 # the generated code (ppc/) read to check the functions and offsets it names.
-sb_test(ea_cpu_budget_test ARGS ${ROOT}/ppc)
+# (Only with ppc/: never in a fresh clone, SB_TESTS_ONLY, CI.)
+if(EXISTS ${ROOT}/ppc/ppc_config.h)
+    sb_test(ea_cpu_budget_test ARGS ${ROOT}/ppc)
+endif()
 # The present waiter uses a swapchain only while it is the current one, and
 # none is destroyed under such a use (video/swapchain_use.h, header only):
 # fake swapchains destroyed and made again under a waiting thread; presenter.cpp
@@ -434,10 +450,15 @@ sb_test(version_check_test)
 # way, and ctest runs the tests without LD_LIBRARY_PATH, so this one couldn't
 # load libSDL3 there (v0.1.5). Only this test: the game's own rpath is
 # unchanged (none on the Frame).
-find_package(SDL3 REQUIRED CONFIG)
-sb_test(key_names_test)
-target_link_libraries(key_names_test PRIVATE SDL3::SDL3)
-set_target_properties(key_names_test PROPERTIES SKIP_BUILD_RPATH OFF)
+# Left out where SDL3 isn't installed (a fresh clone's CI: SB_TESTS_ONLY).
+find_package(SDL3 CONFIG QUIET)
+if(SDL3_FOUND)
+    sb_test(key_names_test)
+    target_link_libraries(key_names_test PRIVATE SDL3::SDL3)
+    set_target_properties(key_names_test PROPERTIES SKIP_BUILD_RPATH OFF)
+else()
+    message(STATUS "key_names_test left out: no SDL3")
+endif()
 # The Key options (Settings > Controls): the table, the [keys] names in the
 # file, and what Set accepts (user/settings.cpp and the toml++ XenonRecomp
 # vendors; no SDL).

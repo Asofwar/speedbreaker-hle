@@ -8,6 +8,6 @@ cp "$S/build/main/runtime/SpeedBreaker" "$G/SpeedBreaker"
 rm -rf /tmp/ao/xdg; mkdir -p /tmp/ao/xdg; cp -a "$HOME/.local/share/speedbreaker" /tmp/ao/xdg/speedbreaker
 sed -i 's/^fullscreen = .*/fullscreen = false/' /tmp/ao/xdg/speedbreaker/settings.toml
 : > /tmp/ao/pad.cmd
-cd "$G"
+cd "$G" || exit 1
 (env XDG_DATA_HOME=/tmp/ao/xdg NFSMW_INPUT_CMD=/tmp/ao/pad.cmd NFSMW_MOTION_BLUR=0 NFSMW_RESOLUTION=1x NFSMW_SHADOW_SIZE=800 NFSMW_PERF_OVERLAY=0 "$@" ./SpeedBreaker > /tmp/sp_$name.log 2>&1 & echo $! > /tmp/pad.pid)
 echo started $name
