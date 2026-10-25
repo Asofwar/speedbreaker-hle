@@ -28,12 +28,14 @@ namespace
     // the safety net for a store that nothing rings for. It slept 50 us a
     // poll before, ~20000 wake-ups a second for a thread that waits long: CPU
     // power, which a Steam Deck at a low TDP limit takes from its GPU. Linux
-    // only: macOS coalesces default-QoS timers to ~10 ms (see the command
+    // and Windows (the bell waits on WaitOnAddress there, and sleeps go
+    // through compat/win/win_sleep.c's high-resolution timer); not macOS,
+    // which coalesces default-QoS timers to ~10 ms (see the command
     // processor's Worker). NFSMW_GPU_WAIT_BACKOFF=0 spins throughout, =50
     // sleeps 50 us a poll as before.
     void BackOff()
     {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
         static const int mode = [] {
             const char* v = std::getenv("NFSMW_GPU_WAIT_BACKOFF");
             return !v ? 1 : v[0] == '0' ? 0 : std::atoi(v) == 50 ? 2 : 1;

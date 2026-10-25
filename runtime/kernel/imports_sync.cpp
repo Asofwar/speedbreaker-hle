@@ -283,9 +283,10 @@ uint32_t KeDelayExecutionThread(uint32_t waitMode, uint32_t alertable, be<int64_
         // in them, 60% of it in sched_yield, and kept one of the Steam
         // Machine's two fast cores (see hostcpu::ReserveFastCore). After 1 ms
         // of back-to-back zero delays each one sleeps 100 us instead (a new
-        // poll starts exact). Linux only: macOS coalesces default-QoS timers
-        // to ~10 ms. NFSMW_SLEEP0_BACKOFF=0 always yields.
-#ifdef __linux__
+        // poll starts exact). Linux and Windows (compat/win/win_sleep.c's
+        // high-resolution timer); not macOS, which coalesces default-QoS
+        // timers to ~10 ms. NFSMW_SLEEP0_BACKOFF=0 always yields.
+#if defined(__linux__) || defined(_WIN32)
         static const bool backOff = [] { const char* v = std::getenv("NFSMW_SLEEP0_BACKOFF"); return !v || v[0] != '0'; }();
         thread_local Clock::time_point firstZero{}, lastZero{};
         auto now = Clock::now();
