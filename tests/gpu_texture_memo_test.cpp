@@ -88,7 +88,7 @@ static void TestRenderer(const char* path)
 
     // Draw reads the epoch before the memo check and the lookups, and looks
     // its textures up unless the memo holds them.
-    CHECK(count(all, "constuint64_tepoch=writewatch::WriteEpoch();constbooldrawScaled=s_drawScaled&&s_scaled.enabled;"
+    CHECK(count(all, "constuint64_tepoch=writewatch::WriteEpoch();constbooldrawScaled=s_drawScaled&&s_scaled->enabled;"
                      "if(!textureCache.memoOn||!TextureMemoHolds(layout,epoch,drawScaled))LookupTextures(layout,epoch,drawScaled);") == 1,
         "Draw reads the epoch first and looks its textures up unless the memo holds them");
     // The bound textures are compared again unless they were last found
