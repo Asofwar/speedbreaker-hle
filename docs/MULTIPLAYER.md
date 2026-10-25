@@ -513,6 +513,10 @@ Tested with real game clients, not bots (protocol 9):
 - **The start barrier in a real race** (after the free roam fix): two race replays of `race.jlg` (a Quick Race with three AI opponents) at once, multiplayer on with 2 players to wait for. Each
   game was held at the start once its opponents existed, the server released both together, and each gave its first opponent to the other player ("remote player 2 (TWO) drives opponent
   0"). The replays then left their recording (a car driven by another player is not the recorded one), as expected.
+- **A Quick Race through the menus, two clients** (fresh profiles, a virtual pad: START, A for "no profile", Quick Race, Custom, Circuit, Ironwood, 2 laps and 3 opponents, a
+  car, the gearbox): both games with Ready ticked and their lobby cars (an RX-8, a Supra). Each game made its player car the lobby car whatever the car selection said (the summary
+  showed the IS300) through the SKIPFE path, made opponent 0 the other's car, held the start with 3 opponents made until the server released both, and both raced with the other's
+  name over its car. The paint still differs (the red RX-8 was purple on the other machine).
 Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN.
 
 ### Same paint on every machine: what was tried (2026-10-25, not solved)
