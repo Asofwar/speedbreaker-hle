@@ -15,6 +15,11 @@
 
 namespace video
 {
+    // The anti-aliasing pass's compute shader (its push constants: size,
+    // subpixel, bandOn, band, uvScale, copyOnly, pad: 48 bytes), for the
+    // renderer's own pass on the scene (gpu/renderer.cpp, RunSceneAa).
+    const char* AntiAliasingGlsl();
+
     // NFSMW_LOG_COVERS=1 (gpu/covers.h): the picture lines logged so far
     // (each a new box or layer).
     uint64_t PictureCoverHits();

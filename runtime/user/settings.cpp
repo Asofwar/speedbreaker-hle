@@ -314,6 +314,10 @@ namespace settings
               .table = "video", .key = "anti_aliasing", .label = "Anti-Aliasing",
               .description = "Smooth jagged edges (the 360 used 2x MSAA; this is an FXAA-style pass).",
               .env = "NFSMW_AA", .defaultValue = 1 },
+            { .id = Id::AaKeepHudSharp, .category = Category::Graphics, .type = Type::Bool, .apply = Apply::Live,
+              .table = "video", .key = "aa_keep_hud_sharp", .label = "Keep HUD Sharp",
+              .description = "Anti-Aliasing on the race's picture only, before the speedometer, the map and the text are drawn over it: they stay sharp. Off: on the whole frame, as before.",
+              .env = "NFSMW_AA_KEEP_HUD_SHARP", .defaultValue = 1 },
             { .id = Id::Scaling, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
               .table = "video", .key = "scaling", .label = "Upscaling",
               .description = kFsr1Offered

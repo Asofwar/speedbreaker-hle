@@ -1751,6 +1751,12 @@ void main()
         } s_post;
         // Read every frame: the settings menu changes them live.
         bool AaEnabled() { return settings::GetBool(settings::Id::AntiAliasing); }
+        // This frame's: none where the renderer anti-aliased its scene
+        // before the HUD (Keep HUD Sharp).
+        bool AaThisFrame()
+        {
+            return AaEnabled() && !(settings::GetBool(settings::Id::AaKeepHudSharp) && gpu::renderer::SceneAntiAliased());
+        }
         bool Bicubic() { return settings::GetInt(settings::Id::Scaling) == int32_t(settings::ScalingMode::Bicubic); }
         float Sharpen() { return std::clamp(settings::GetFloat(settings::Id::Sharpening), 0.0f, 1.0f); }
 
@@ -4822,7 +4828,8 @@ void main()
                 // with the AA off it copies that part, so the passes after
                 // see a frame-sized image as always.
                 const bool oversized = gpuImage && ((imageW && imageW != w) || (imageH && imageH != h));
-                if (AaEnabled() || oversized)
+                const bool aaThisFrame = AaThisFrame();
+                if (aaThisFrame || oversized)
                 {
                     EnsureAaImage(w, h);
                     Barrier(cmd, s_post.aaImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT,
@@ -4842,7 +4849,7 @@ void main()
                         float uvScale[2];
                         uint32_t copyOnly, pad;
                     } pc = { int32_t(w), int32_t(h), 0.5f, bandOn ? 1u : 0u, { band.x0, band.x1, band.y0, band.y1 },
-                        { imageW ? float(w) / float(imageW) : 1.0f, imageH ? float(h) / float(imageH) : 1.0f }, AaEnabled() ? 0u : 1u, 0u };
+                        { imageW ? float(w) / float(imageW) : 1.0f, imageH ? float(h) / float(imageH) : 1.0f }, aaThisFrame ? 0u : 1u, 0u };
                     static_assert(sizeof(pc) == 48);
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_post.aa);
                     s_post.pushDescriptorSet(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_post.aaLayout, 0, 2, writes);
@@ -5286,6 +5293,11 @@ void main()
             LogSurfaceResult("vkQueuePresentKHR", present);
         s_frameIndex = (s_frameIndex + 1) % FRAMES_IN_FLIGHT;
         return true;
+    }
+
+    const char* AntiAliasingGlsl()
+    {
+        return kAaCs;
     }
 
     void SubmitFrontImage(VkImage image, uint32_t width, uint32_t height, uint32_t aspectWidth, uint32_t aspectHeight, float between,

@@ -9256,6 +9256,72 @@ void main()
             return !active;
         }
 
+        // Settings > Graphics > Keep HUD Sharp: the colour target the game's
+        // final grade drew into this frame, anti-aliased before the next draw
+        // or resolve (the HUD's), with the presenter's pass (video::
+        // AntiAliasingGlsl) into the post scratch and copied back.
+        RenderTarget* s_aaSource = nullptr;
+        std::atomic<uint64_t> s_sceneAaFrame{ 0 };  // s_frame + 1 at the last one
+        VkPipeline s_sceneAaPipeline = VK_NULL_HANDLE;
+        VkPipelineLayout s_sceneAaLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout s_sceneAaSetLayout = VK_NULL_HANDLE;
+
+        void RunSceneAa()
+        {
+            RenderTarget* rt = s_aaSource;
+            s_aaSource = nullptr;
+            if (rt->vkFormat != VK_FORMAT_R8G8B8A8_UNORM)
+            {
+                LogOnce(0x9071, "Keep HUD Sharp: the final grade's target is format %d, not 8-bit RGBA", int(rt->vkFormat));
+                return;
+            }
+            const uint32_t w = std::min(rt->width, rt->scale.x.Size(1280)), h = std::min(rt->height, rt->scale.y.Size(720));
+            if (!EnsurePostFx(w, h, false))
+                return;
+            if (!s_sceneAaPipeline)
+            {
+                const VkDescriptorSetLayoutBinding b[2] = {
+                    { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr },
+                    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr },
+                };
+                CreateComputePipeline(video::AntiAliasingGlsl(), b, 2, 48, s_sceneAaSetLayout, s_sceneAaLayout, s_sceneAaPipeline, "");
+                if (!s_sceneAaPipeline)
+                    return;
+            }
+            EndPass(kBreakOther);
+            Begin();
+            FlushPendingClears(rt);
+            FullBarrier();
+            VkDescriptorImageInfo in{ s_post.sampler, rt->image.view, VK_IMAGE_LAYOUT_GENERAL };
+            VkDescriptorImageInfo out{ VK_NULL_HANDLE, s_post.scratch.view, VK_IMAGE_LAYOUT_GENERAL };
+            VkWriteDescriptorSet writes[2] = {
+                { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &in, nullptr, nullptr },
+                { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &out, nullptr, nullptr },
+            };
+            struct
+            {
+                int32_t width, height;
+                float subpixel;
+                uint32_t bandOn;
+                int32_t band[4];
+                float uvScale[2];
+                uint32_t copyOnly, pad;
+            } pc = { int32_t(w), int32_t(h), 0.5f, 0u, { 0, 0, 0, 0 }, { float(w) / float(rt->width), float(h) / float(rt->height) }, 0u, 0u };
+            static_assert(sizeof(pc) == 48);
+            s_stateEpoch++;
+            vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_sceneAaPipeline);
+            s_pushDescriptorSet(s_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_sceneAaLayout, 0, 2, writes);
+            vkCmdPushConstants(s_cmd, s_sceneAaLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+            vkCmdDispatch(s_cmd, (w + 7) / 8, (h + 7) / 8, 1);
+            FullBarrier();
+            VkImageCopy copy{};
+            copy.srcSubresource = copy.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            copy.extent = { w, h, 1 };
+            vkCmdCopyImage(s_cmd, s_post.scratch.image, VK_IMAGE_LAYOUT_GENERAL, rt->image.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+            FullBarrier();
+            s_sceneAaFrame.store(s_frame + 1, std::memory_order_relaxed);
+        }
+
         // ReadBackScenePhoto: the request, and the colour target the game's
         // final grade (kGradeShaderHashes) last drew into this frame (the
         // next draw or resolve copies it, before anything is drawn over it).
@@ -9268,6 +9334,8 @@ void main()
 
         void Resolve()
         {
+            if (s_aaSource)
+                RunSceneAa();
             if (s_photoSource)
                 TakeScenePhoto();
             s_stats.resolves++;
@@ -12699,6 +12767,8 @@ void main()
     {
         if (!s_vk)
             return;
+        if (s_aaSource)
+            RunSceneAa();
         if (s_photoSource)
             TakeScenePhoto();
         reg::VGT_DRAW_INITIATOR initiator;
@@ -12878,6 +12948,9 @@ void main()
         // samples scaled textures (every attachment shares the pitch, so the scale).
         // A photo asked for: the final grade's target, copied before the
         // next draw or resolve (TakeScenePhoto).
+        if (color[0] && (s_ps->hash == kGradeShaderHashes[0] || s_ps->hash == kGradeShaderHashes[1]) &&
+            settings::GetBool(settings::Id::AntiAliasing) && settings::GetBool(settings::Id::AaKeepHudSharp))
+            s_aaSource = color[0];
         if (s_photoWanted.load(std::memory_order_acquire) && color[0] &&
             (s_ps->hash == kGradeShaderHashes[0] || s_ps->hash == kGradeShaderHashes[1]))
         {
@@ -15568,6 +15641,12 @@ void main()
         ReadBackImage(s_lastFront, std::move(done));
     }
 
+    bool SceneAntiAliased()
+    {
+        const uint64_t at = s_sceneAaFrame.load(std::memory_order_relaxed);
+        return at && s_frame <= at + 1;  // (this frame's, or the one before: the presenter is a frame behind)
+    }
+
     void ReadBackScenePhoto(FrontPixels done)
     {
         std::lock_guard lock(s_photoMutex);
@@ -15753,6 +15832,7 @@ void main()
         s_cacheFrame = frame;
         s_cubeResolves = 0;
         s_photoSource = nullptr;  // (a target from this frame only)
+        s_aaSource = nullptr;
         {
             // A photo asked for a second ago with no final grade since: none.
             std::lock_guard lock(s_photoMutex);

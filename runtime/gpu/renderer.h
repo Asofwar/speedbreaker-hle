@@ -106,6 +106,10 @@ namespace gpu::renderer
     // 0) when the frame had no final grade (a menu, a movie) within a
     // second. Any thread.
     void ReadBackScenePhoto(FrontPixels done);
+    // The latest frames' scene was anti-aliased before its HUD (Settings >
+    // Graphics > Keep HUD Sharp): the presenter's own pass is left out. Any
+    // thread.
+    bool SceneAntiAliased();
 
     // After each swap (NFSMW_PASS_PROFILE=<frame> prints that frame's passes).
     void OnSwap(uint64_t frame);

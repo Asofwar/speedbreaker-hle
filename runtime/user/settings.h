@@ -47,6 +47,7 @@ namespace settings
         PresentScale,  // shown on iOS only
         GraphicsQuality,  // GraphicsQualityPreset: sets the options it covers (user/settings.cpp's kPresets)
         AntiAliasing,
+        AaKeepHudSharp,  // the anti-aliasing on the scene before its HUD (gpu/renderer.cpp's RunSceneAa)
         Scaling,
         AspectRatio,
         Brightness,    // the game's picture (video/display_tone.h)
