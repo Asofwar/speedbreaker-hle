@@ -145,6 +145,32 @@ namespace video
         return s;
     }
 
+    gpu::RenderScale NativeShapeAxes(gpu::RenderScale base, uint32_t regionW, uint32_t regionH)
+    {
+        if (base.x == base.y)
+            return NativeShape(base.x, regionW, regionH);
+        gpu::RenderScale s = base;
+        switch (ShapeOf(regionW, regionH))
+        {
+        case Shape::Tall:
+        {
+            // 720 rows' host ones, and as many more as the picture is taller than 16:9.
+            const uint32_t rows = uint32_t(std::lround(double(base.y.Size(720)) * (16.0 / 9.0) * double(regionH) / double(regionW)));
+            s.y = gpu::AxisFor(std::max(rows, base.y.Size(720)), 720);
+            break;
+        }
+        case Shape::Wide:
+        {
+            const uint32_t columns = uint32_t(std::lround(double(base.x.Size(1280)) * (9.0 / 16.0) * double(regionW) / double(regionH)));
+            s.x = gpu::AxisFor(std::max(columns, base.x.Size(1280)), 1280);
+            break;
+        }
+        case Shape::Wide16x9:
+            break;
+        }
+        return s;
+    }
+
     gpu::RenderScale NativeAuto(uint32_t sx, uint32_t sy, uint32_t regionW, uint32_t regionH, uint32_t budget)
     {
         const gpu::RenderScale whole = gpu::RenderScale::Whole(sx, sy);

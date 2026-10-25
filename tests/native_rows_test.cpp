@@ -31,6 +31,7 @@ using video::AutoNativeScale;
 using video::AutoRenderScale;
 using video::FitPicture;
 using video::NativeShape;
+using video::NativeShapeAxes;
 using video::PictureFit;
 
 static int g_failures = 0;
@@ -74,6 +75,20 @@ int main()
         const PictureFit box = Picture(1280, 800, false);
         CHECK(box.width == 1280 && box.height == 720, "Deck 16:9 box %dx%d", box.width, box.height);
         CHECK((NativeShape(kOne, 1280, 720) == RenderScale{ kOne, kOne }), "Deck 16:9 at 1x: %s", gpu::ScaleName(NativeShape(kOne, 1280, 720)).c_str());
+    }
+    printf("One axis at 1.5x (Internal Resolution's 1.5x1 and 1x1.5)\n");
+    {
+        auto frame = [](RenderScale base, uint32_t w, uint32_t h, uint32_t wantW, uint32_t wantH) {
+            const PictureFit fit = Picture(int(w), int(h));
+            const RenderScale s = NativeShapeAxes(base, uint32_t(fit.width), uint32_t(fit.height));
+            CHECK(s.x.Size(1280) == wantW && s.y.Size(720) == wantH, "%s on %ux%u: %s, %ux%u, want %ux%u", gpu::ScaleName(base).c_str(), w, h,
+                gpu::ScaleName(s).c_str(), s.x.Size(1280), s.y.Size(720), wantW, wantH);
+        };
+        frame({ kHalf, kOne }, 1280, 800, 1920, 800);    // the Deck: 1x's 800 rows, 1.5x's columns
+        frame({ kOne, kHalf }, 1280, 800, 1280, 1200);
+        frame({ kHalf, kOne }, 1920, 1080, 1920, 720);   // 16:9: as set
+        frame({ kHalf, kOne }, 3440, 1440, 2580, 720);   // an ultrawide: 1x's 720 rows, half again the columns 1x would add
+        CHECK((NativeShapeAxes({ kHalf, kHalf }, 1280, 800) == NativeShape(kHalf, 1280, 800)), "1.5x1.5 as NativeShape");
     }
     Native(1280, 800, kHalf, 1920, 1200);   // 1.5x on the Deck
     Native(1280, 800, kTwo, 2560, 1600);

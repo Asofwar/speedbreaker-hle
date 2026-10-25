@@ -3054,14 +3054,29 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
         // only, for now: video::AutoRenderScale) could pick 1.5x by
         // returning one; it never goes below 1x (that is the player's call,
         // for a weak GPU).
+        // Internal Resolution's scale (settings::kResolutionAxes): one axis
+        // or one per axis. Not one of the entries: 1x.
+        gpu::RenderScale SettingScale(int32_t setting)
+        {
+            gpu::AxisScale x, y;
+            if (setting >= settings::kResolutionAxes)
+            {
+                if (!gpu::AxisFromEighths(uint32_t(setting) >> 8 & 0xFF, x) || !gpu::AxisFromEighths(uint32_t(setting) & 0xFF, y) ||
+                    x.Below() || y.Below())
+                    x = y = {};
+                return { x, y };
+            }
+            if (!gpu::AxisFromEighths(uint32_t(setting), x))
+                x = {};
+            return { x, x };
+        }
+
         gpu::RenderScale WantedRenderScale(int32_t setting, uint32_t regionW, uint32_t regionH)
         {
             if (setting > 0)
             {
-                gpu::AxisScale a;
-                if (!gpu::AxisFromEighths(uint32_t(setting), a))
-                    a = {};  // (not one of the entries: 1x)
-                return s_nativeShape && !a.Below() ? video::NativeShape(a, regionW, regionH) : gpu::RenderScale{ a, a };
+                const gpu::RenderScale s = SettingScale(setting);
+                return s_nativeShape && !s.x.Below() ? video::NativeShapeAxes(s, regionW, regionH) : s;
             }
             uint32_t sx = 1, sy = 1;
             // Auto: enough host pixels to cover the screen area the frame
@@ -3097,12 +3112,7 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
             // Native rows or columns: unlike the setting's (Auto's) scale on its own.
             gpu::RenderScale plain;
             if (setting > 0)
-            {
-                gpu::AxisScale a;
-                if (!gpu::AxisFromEighths(uint32_t(setting), a))
-                    a = {};
-                plain = { a, a };
-            }
+                plain = SettingScale(setting);
             else
             {
                 uint32_t sx = 1, sy = 1;

@@ -185,6 +185,10 @@ namespace settings
     // before 0.75x); Auto picks it from the screen area the picture covers
     // (see renderer), never below 1x.
     constexpr int32_t kResolutionAuto = 0;
+    // Internal Resolution's values are a scale in eighths for both axes (8:
+    // 1x), or from kResolutionAxes on one per axis: x eighths in the second
+    // byte, y eighths in the first ("1.5x1": 12 << 8 | 8).
+    constexpr int32_t kResolutionAxes = 256;
     // Auto: a screen of another shape is filled (video/picture_fit), the HUD
     // kept in a centred 16:9 block: a wider one with a wider view (Hor+), a
     // narrower one (16:10: the Steam Deck, 1280x800 Macs; 3:2, 4:3) with a

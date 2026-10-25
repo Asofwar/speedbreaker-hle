@@ -133,6 +133,11 @@ namespace settings
             { 5, "0.625x", kFsr1Offered ? "0.625x (450p, for FSR)" : "0.625x (450p)" },
             { 6, "0.75x", kFsr1Offered ? "0.75x (540p, for FSR)" : "0.75x (540p)" },
             { 8, "1x", "1x (720p)" },
+            // One axis at 1.5x, the other at 1x: half again the pixels of 1x
+            // in place of 1.5x's 2.25 times (kResolutionAxes: x eighths in
+            // the second byte, y eighths in the first).
+            { (12 << 8) | 8, "1.5x1", "1.5x wide only" },
+            { (8 << 8) | 12, "1x1.5", "1.5x tall only" },
             { 12, "1.5x", "1.5x (1080p)" },
             { 16, "2x", "2x (1440p)" },
             { 24, "3x", "3x (2160p)" },

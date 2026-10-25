@@ -83,6 +83,10 @@ namespace video
     // 0.5% of 16:9 (a letterboxed 16:9 box, as AutoRenderScale tells it)
     // keeps `base` both ways, exactly as before. No region: `base` too.
     gpu::RenderScale NativeShape(gpu::AxisScale base, uint32_t regionW, uint32_t regionH);
+    // The same from a scale with one per axis (Internal Resolution's 1.5x1
+    // and 1x1.5): the axis a Vert+ or Hor+ picture adds to keeps its share
+    // of the other's, so 1.5x1 on a Steam Deck renders 1920x800.
+    gpu::RenderScale NativeShapeAxes(gpu::RenderScale base, uint32_t regionW, uint32_t regionH);
 
     // Auto with native rows and columns: Auto's whole scale sx x sy
     // (AutoRenderScale's), unless the picture is Vert+ or Hor+ and NativeShape
