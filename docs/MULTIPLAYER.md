@@ -549,4 +549,8 @@ So the choice is made elsewhere: by a generator of the game's own with another f
 - One normal frame with every draw's vertex shader constants (c0..c255) and pixel shader constants (c0..c63), purple against lime green: the only colour-like rows are world
   matrix rows (their fourth component is a position). Every texture of the car shaders (ps_7f7cf48a), its first 4 KB hashed, brown with a blue vinyl against silver: the same in
   both runs. The textures that differ belong to the frame's own targets (reflections, the environment cube, the grade), which hide anything else.
-- Next, if picked up: the textures of each draw that covers the rival car's pixels on screen, hashed in full and with the frame's render targets left out.
+- Every draw's vertex buffers hashed whole (green against purple): the car shaders' buffers in the scene are the same; the only ones that differ are a shadow map's (another
+  car in its frustum). So the colour isn't in the vertex data either.
+- Next, if picked up: a per-pixel attribution (which draw last wrote the rival car's pixels, by a readback after each draw of one frame), then that draw's every input compared
+  between runs; or, from the game side, where the opponent's car record gets its paint and vinyl part keys (the 408-byte customisation record the front end keeps for the player's
+  own car, +1124 of *0x82A2C684, is the place such keys live).
