@@ -50,6 +50,7 @@ namespace settings
         AaKeepHudSharp,  // the anti-aliasing on the scene before its HUD (gpu/renderer.cpp's RunSceneAa)
         Scaling,
         AspectRatio,
+        FieldOfView,   // degrees added to the views' vertical FOV (game/ultrawide.cpp's projection hook)
         Brightness,    // the game's picture (video/display_tone.h)
         Contrast,      // the same, after it
         Saturation,

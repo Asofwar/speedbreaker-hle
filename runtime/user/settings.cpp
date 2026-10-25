@@ -328,6 +328,11 @@ namespace settings
               .table = "video", .key = "aspect_ratio", .label = "Aspect Ratio",
               .description = "Fill other screen shapes: a wider view on an ultrawide, a taller one on a Steam Deck or a 4:3 iPad, the HUD at 16:9. Or 16:9 with bars.",
               .env = "NFSMW_ASPECT", .defaultValue = double(AspectMode::Auto), .entries = kAspectEntries },
+            // Field of View: degrees added to the camera's vertical FOV (game/ultrawide.cpp).
+            { .id = Id::FieldOfView, .category = Category::Display, .type = Type::Int, .apply = Apply::Live,
+              .table = "video", .key = "field_of_view", .label = "Field of View",
+              .description = "A wider view of the road (more degrees) or a narrower one, in every camera; the game's own widening at speed stays. The HUD and the mirror don't change. 0 is the original view.",
+              .env = "NFSMW_FOV", .defaultValue = 0, .min = -10, .max = 30, .step = 1 },
             // Brightness: a power curve on the game's picture, -5..+5 (video/display_tone.h).
             { .id = Id::Brightness, .category = Category::Display, .type = Type::Int, .apply = Apply::Live,
               .table = "video", .key = "brightness", .label = "Brightness",

@@ -16,7 +16,10 @@
 //     argument); its id is at +4. Only the views the game itself widens for
 //     16:9 are changed: 1, 2, 4, 5 and 17 (the player's camera, the road
 //     reflection and the shadow frustum among them), so the shadow maps
-//     (13-16) and the env cube (18-23) keep theirs.
+//     (13-16) and the env cube (18-23) keep theirs. Settings > Display >
+//     Field of View adds its degrees to the same views' vertical FOV (from
+//     f10, as the game built it) and scales f12 by as much, so the shape
+//     stays; the camera's own FOV changes (speed, nitrous) stay in it.
 //   - UltrawideFrontEnd, at the branch at 0x82440E4C that ends the
 //     widescreen case of the front-end matrix (sub_82440D80): f13 is its x
 //     scale (0.92 safe area x 0.75, a 4:3 canvas centred in 16:9) and f0 its
@@ -49,6 +52,9 @@
 #include "glare.h"
 
 #include <kernel/function.h>
+#include <user/settings.h>
+
+#include <cmath>
 
 namespace
 {
@@ -108,6 +114,21 @@ namespace
     void ScaleRegister(PPCRegister& f, float scale)
     {
         f.f64 = double(float(f.f64) * scale);
+    }
+
+    // Settings > Display > Field of View: the factor on both projection
+    // scales that adds its degrees to the vertical FOV whose 1 / tan(half) is
+    // `f10` (1 where it adds none, or the view isn't a perspective one).
+    float FovScale(double f10)
+    {
+        const int32_t degrees = settings::GetInt(settings::Id::FieldOfView);
+        const double inv = std::abs(f10);
+        if (degrees == 0 || !(inv > 0.0) || !std::isfinite(inv))
+            return 1.0f;
+        constexpr double kRadians = 3.14159265358979323846 / 180.0;
+        const double half = std::atan(1.0 / inv);
+        const double wider = std::clamp(half + 0.5 * degrees * kRadians, 5.0 * kRadians, 75.0 * kRadians);
+        return float(std::tan(half) / std::tan(wider));
     }
 
     // About the screen centre (0.5 of it), for the mirror's 0..1 edge.
@@ -198,10 +219,17 @@ void UltrawideProjection(PPCRegister& r28, PPCRegister& f12, PPCRegister& f10)
         s_tallHooksSeen.store(true, std::memory_order_relaxed);
     }
     const Scales scale = s_scales.load(std::memory_order_relaxed);
-    if (scale.x == 1.0f && scale.y == 1.0f)
+    const bool fov = settings::GetInt(settings::Id::FieldOfView) != 0;
+    if (scale.x == 1.0f && scale.y == 1.0f && !fov)
         return;
     if (!WidenedView(r28.u32))
         return;
+    if (fov)
+    {
+        const float k = FovScale(f10.f64);
+        ScaleRegister(f12, k);
+        ScaleRegister(f10, k);
+    }
     if (scale.x != 1.0f)
         ScaleRegister(f12, scale.x);
     if (scale.y != 1.0f)

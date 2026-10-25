@@ -544,6 +544,7 @@ switcher).
 | Smooth Motion | On / Off | Off. On a Mac with a 120 Hz screen: up to 120 fps. The game still runs at 60 steps a second, as on the console, and draws one more picture between each two; the controls answer a few milliseconds later. Heavy scenes ease off, down to an even 60 for a while. Takes effect the next time the game starts. Shown only where it works. |
 | Screen Resolution | Full / 75% | Full. iPhone and iPad only: 75% is slightly softer and saves graphics work. |
 | Aspect Ratio | Fill Screen / 16:9 | Fill Screen: wider screens get a wider view; 4:3, 3:2 and 16:10 screens (the Steam Deck, many Macs) a taller one. Since v0.1.9 the game renders the screen's own shape: a Steam Deck draws 1280x800 at 1x, a 1920x1200 screen 1920x1200 at 1.5x. 16:9 always shows the classic picture with bars. |
+| Field of View | -10 to +30 | 0, the game's own view. Degrees added to every camera's view: more of the road at the sides and above. The game's own widening at speed and with nitrous still happens on top. The HUD and the rear-view mirror stay as they are. |
 | Brightness | -5 to +5 | 0, the picture as it is. Each step makes the shadows and mid-tones a little lighter or darker, like a TV's brightness; black and white stay put, and the menus never change. |
 | Xbox 360 Display Gamma | On / Off | On: the gamma ramp the game sets for a real Xbox 360's TV output, with slightly deeper shadows and slightly brighter mid-tones. Off: the flatter picture of v0.1.3 and earlier. |
 
@@ -556,6 +557,7 @@ then Yes, puts it back.
 | Option | Choices | Default |
 |---|---|---|
 | Anti-Aliasing | On / Off | On |
+| Keep HUD Sharp | On / Off | On: anti-aliasing smooths the race's picture before the speedometer, the map and the text are drawn over it, so they stay crisp. Off: the whole frame, as before. |
 | Upscaling | Bicubic / Bilinear / FSR 1 | Bicubic. FSR 1 (AMD FidelityFX Super Resolution 1) keeps curves, wires and diagonals smooth when the picture is enlarged a lot, such as 1x on a 1440p or 4K screen; it is used only when the picture is enlarged, costs a little more GPU time, and makes foliage look slightly painted. Not on iPhone and iPad. |
 | Sharpening | 0.00 to 1.00 | 0.30 (0 turns it off). With FSR 1, the share of its sharpening pass's full strength. |
 | Anisotropic Filtering | Auto / Off / 2x / 4x / 8x / 16x / Original | Auto: 16x on dedicated graphics cards and M-series iPads, 4x elsewhere. Original uses each texture's own setting, as on the 360. |
