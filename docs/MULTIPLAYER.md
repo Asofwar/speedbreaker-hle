@@ -554,5 +554,10 @@ So the choice is made elsewhere: by a generator of the game's own with another f
 - The cars' own textures (sampled by the car shaders 48553c3b, 781d5cda, 793a572b, ca767628; loaded at other addresses each run, so matched by size and order, first 64 KB
   hashed; silver with a red vinyl against pink): of 20 per run, 9 have the same contents in both runs, 11 differ, among them a 1024x1024 one of a pair whose other half is the
   same, and the 32x32, 128x64, 256x128 and 256x256 ones of both cars. The 1024x1024 one is the best candidate for the composited skin (paint and vinyl).
-- Next, if picked up: dump that texture as a picture to confirm it (the renderer has no texture dump yet: untile and decode it as the texture cache does), then a hardware write
-  breakpoint on it (debug::DrWatch, rebuilt from this history) to find what composites it, and from which inputs; or a per-pixel attribution of the rival car's pixels. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
+- Not composited on the GPU: no resolve goes to a 1024-pitch surface (`NFSMW_LOG_RESOLVES_PITCH=1024`) while the cars load; so the skin's pieces are textures loaded from
+  the car's files (the paint and vinyl chosen pick which).
+- Every resource key `sub_824618C0` gets (once each, with the guest call chain from the stack's back chain: 0(r1), the saved LR 8 bytes below each frame): about 850 a run, 840 in
+  three runs alike; the 7 to 13 that differ all come through one path, 8245FF28 < 8243DAE8 < 8221AA18 < 8221B09C < 82217290 < 823B9BA8 (the streaming side), the common ones
+  through the start-up path (8221AF60 < 823B023C ...). Whether those keys are the car's parts or the world streamed around it, the keys alone don't say.
+- Next, if picked up: dump the differing 1024x1024 texture as a picture (the renderer has no texture dump yet: untile and decode it as the texture cache does) to tell the skin
+  from the world, then follow its load request back (the 82217290 path) to the car part that names it. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
