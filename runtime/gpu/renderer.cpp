@@ -8996,10 +8996,38 @@ void main()
         // the frame's pitch-280 resolves, which the draws before it share (so the draws are skipped by the same count).
         constexpr uint32_t kCubePitch = 280;
         uint32_t s_cubeResolves = 0;  // pitch-280 resolves so far this frame
+        // Reflection Refresh's Auto (0): every frame while the GPU keeps up,
+        // every 3rd once its execution time takes most of a 60 fps frame
+        // (AutoReflectionRefresh, at the swap; the GPU timestamps are on).
+        int32_t s_autoReflection = 1;
+
+        // Once a second: the GPU's execution time a frame over the last one,
+        // above 85% of a 60 fps frame: every 3rd; below 60%: every frame.
+        void AutoReflectionRefresh()
+        {
+            static uint64_t lastNs = 0, lastFrame = 0;
+            if (s_frame < lastFrame + 60)
+                return;
+            const uint64_t ns = s_gpuExecNs.load(std::memory_order_relaxed);
+            const double ms = double(ns - lastNs) / 1e6 / double(s_frame - lastFrame);
+            lastNs = ns;
+            lastFrame = s_frame;
+            if (!s_timestamps || settings::GetInt(settings::Id::ReflectionRefresh) != 0)
+                return;
+            const int32_t was = s_autoReflection;
+            if (ms > 0.85 * 16.7)
+                s_autoReflection = 3;
+            else if (ms < 0.6 * 16.7)
+                s_autoReflection = 1;
+            if (s_autoReflection != was)
+                fprintf(stderr, "[reflections] Auto: the GPU executes %.1f ms a frame, reflections every %d frames\n", ms, s_autoReflection);
+        }
 
         bool CubeFaceSkipped()
         {
-            const int32_t n = settings::GetInt(settings::Id::ReflectionRefresh);
+            int32_t n = settings::GetInt(settings::Id::ReflectionRefresh);
+            if (n == 0)
+                n = s_autoReflection;
             if (n <= 1)
                 return false;
             const bool active = (uint64_t(s_cubeResolves) + s_frame) % uint64_t(n) == 0;
@@ -11880,7 +11908,9 @@ void main()
             // HFR (game/hfr.h) needs the GPU's execution time for its load
             // check: the busy time (submit to seen done) counts the queue's
             // waits too, and read 9-12 ms a frame where execution took 5-8.
-            if (const char* v = std::getenv("NFSMW_GPU_TIMING"); (v && v[0] == '1') || (!(v && v[0] == '0') && hfr::Enabled()))
+            // Reflection Refresh's Auto too (as set at start).
+            if (const char* v = std::getenv("NFSMW_GPU_TIMING"); (v && v[0] == '1') ||
+                (!(v && v[0] == '0') && (hfr::Enabled() || settings::GetInt(settings::Id::ReflectionRefresh) == 0)))
                 if (vkCreateQueryPool(s_dev, &qpci, nullptr, &s_timestamps) != VK_SUCCESS)
                     s_timestamps = VK_NULL_HANDLE;
             if (s_profileFrame >= 0)
@@ -15224,6 +15254,7 @@ void main()
         }
         s_cacheFrame = frame;
         s_cubeResolves = 0;
+        AutoReflectionRefresh();
         s_frame = frame;
         if (s_vk)
             TrimTextureCache();
