@@ -117,7 +117,7 @@ if(WIN32 AND NOT SB_MSVC_FRONTEND)
     # Its icon and manifest (UTF-8 code page, long paths).
     enable_language(RC)
     target_sources(SpeedBreaker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/compat/win/speedbreaker.rc)
-    target_link_libraries(SpeedBreaker PRIVATE -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group ws2_32 iphlpapi synchronization winmm imm32 version setupapi ole32 oleaut32 uuid shlwapi bcrypt advapi32 shell32 user32 gdi32 dbghelp cfgmgr32 hid)
+    target_link_libraries(SpeedBreaker PRIVATE -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group ws2_32 iphlpapi synchronization winmm imm32 version setupapi ole32 oleaut32 uuid shlwapi bcrypt advapi32 shell32 user32 gdi32 dbghelp cfgmgr32 hid winhttp)
 endif()
 find_package(SDL3 REQUIRED CONFIG)
 if(IOS)
@@ -293,7 +293,7 @@ if(WIN32 AND SB_MSVC_FRONTEND)
     # The timer resolution (winmm), crash reports (dbghelp), WaitOnAddress
     # (synchronization), and the shell's known folders (shell32, ole32);
     # FFmpeg's own (avcodec: ole32, user32; avutil: user32, bcrypt).
-    target_link_libraries(SpeedBreaker PRIVATE winmm dbghelp synchronization bcrypt user32 shell32 ole32 advapi32)
+    target_link_libraries(SpeedBreaker PRIVATE winmm dbghelp synchronization bcrypt user32 shell32 ole32 advapi32 winhttp)
 endif()
 if(IOS)
     # The CPU level both the iPad Pro (M2) and the iPhone 15 Pro (A17 Pro)

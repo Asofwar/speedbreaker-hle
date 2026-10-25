@@ -120,7 +120,7 @@ namespace update
         Secure,       // TLS failed (a certificate, the clock)
         TooLarge,     // more than kMaxResponseBytes
         Garbled,      // an answer that isn't HTTP
-        Unavailable,  // no transport here (no curl; Windows for now)
+        Unavailable,  // no transport here (no curl)
         Failed,       // anything else
     };
     struct Fetched

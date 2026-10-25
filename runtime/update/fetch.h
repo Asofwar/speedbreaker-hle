@@ -8,8 +8,8 @@
 //     curl, run with a fixed argument list (no shell, no ~/.curlrc) and a
 //     small environment, its output capped: update/fetch_curl.cpp. Without
 //     curl the answer says so (Transport::Unavailable).
-//   - Windows: not yet (Transport::Unavailable): update/fetch_windows.cpp,
-//     which says how a WinHTTP port fills this in.
+//   - Windows: WinHTTP, the system's proxy settings, no cookies or
+//     credentials: update/fetch_windows.cpp.
 //
 // The request carries the URL, a User-Agent, the headers below and nothing
 // else: no cookies, no credentials, no body.

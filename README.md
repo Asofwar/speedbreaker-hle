@@ -407,7 +407,7 @@ Windows may say **"Windows protected your PC"**: click **More info**, then **Run
 other platforms: it looks for your `.iso` in your user folder, Downloads, Desktop, Documents and
 Games and on your other drives, or takes one (or an extracted disc folder) you browse for, and
 puts the game in `%LOCALAPPDATA%\SpeedBreaker`, where your saves, settings and logs go too.
-`README.txt` in the zip has the details. **Check for Updates** isn't available on Windows yet.
+`README.txt` in the zip has the details.
 
 Please [report](#reporting-a-bug) how it runs, especially on NVIDIA, AMD and Intel Arc
 graphics and on 120 or 144 Hz monitors, with "Windows beta" in the issue's title. Windows
