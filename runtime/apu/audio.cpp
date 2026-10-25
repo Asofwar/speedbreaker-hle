@@ -30,10 +30,10 @@
 #include <stdafx.h>
 #include "audio.h"
 #include "audio_cadence.h"
-#include "audio_wait.h"
 #include <kernel/function.h>
 #include <cpu/guest_thread.h>
 #include <cpu/guest_time.h>
+#include <platform/timer.h>
 #include <SDL3/SDL.h>
 #ifdef __APPLE__
 #include <pthread.h>
@@ -154,14 +154,19 @@ namespace
 #endif
         GuestThreadContext ctx(0);
         SetHostThreadName("nfsmw-audio");
-        apu::AudioWait wait;
-        fprintf(stderr, "[audio] pacing: %s\n", wait.Describe());
+        // Windows (from rafidwayne's port, PR #39): MMCSS for this thread, and
+        // its ticks on a high-resolution waitable timer (platform::SleepUntil):
+        // sleep_until there wakes on the system tick, 1 ms only while
+        // timeBeginPeriod(1) is honoured, which Windows 11 stops guaranteeing
+        // while the window is occluded or minimized; at 15.6 ms every tick is
+        // late and the catch-up bursts play silence.
+        if (const char* priority = platform::RaiseAudioThreadPriority())
+            fprintf(stderr, "[audio] pacing: a high-resolution timer, %s\n", priority);
         // Ticks that woke a whole interval or more late (a catch-up burst
-        // follows, and a burst's frames after the first two are silent), the
-        // worst wake, and when the last of them was logged.
+        // follows), the worst, logged at most every 10 s.
         uint32_t lateTicks = 0;
         double worstLateMs = 0;
-        auto lateLogged = std::chrono::steady_clock::now();
+        auto lateLogged = steady_clock::now();
         constexpr auto INTERVAL = nanoseconds(1000000000ull * SAMPLES_PER_FRAME / SAMPLE_RATE);
         // macOS: real-time scheduling as well, as the vblank's thread has it
         // (video/vblank_timer.h): there an ordinary thread's sleeps ran 3.2 ms
@@ -209,7 +214,7 @@ namespace
         const auto started = steady_clock::now();
         while (s_running)
         {
-            wait.Until(next);
+            platform::SleepUntil(duration_cast<nanoseconds>(next.time_since_epoch()).count());
             {
                 const auto woke = steady_clock::now();
                 const double lateMs = duration<double, std::milli>(woke - next).count();
@@ -220,7 +225,8 @@ namespace
                 }
                 if (lateTicks && woke - lateLogged >= seconds(10))
                 {
-                    fprintf(stderr, "[audio] pacing: %u ticks woke an interval or more late in 10 s (worst %.1f ms)\n", lateTicks, worstLateMs);
+                    fprintf(stderr, "[audio] pacing: %u ticks woke an interval or more late in %.0f s (worst %.1f ms)\n", lateTicks,
+                        duration<double>(woke - lateLogged).count(), worstLateMs);
                     lateTicks = 0;
                     worstLateMs = 0;
                     lateLogged = woke;

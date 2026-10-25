@@ -2,17 +2,21 @@
 #include "../stdafx.h"
 #include "vmem.h"
 #ifdef _WIN32
-#include <compat/win/win_mem.h>
+#include <platform/memory.h>
 #endif
 
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 namespace vmem
 {
     bool RemapAnon(void* host, size_t bytes)
     {
 #ifdef _WIN32
-        return winmem::ResetPages(host, bytes);  // decommitted and committed again: zeros
+        // Windows: decommit and commit again (platform/memory.h). Its pages
+        // are 4 KB, a guest page, so every range is whole host pages.
+        return platform::ResetPrivatePages(host, bytes);
 #else
         return mmap(host, bytes, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) != MAP_FAILED;
 #endif
@@ -51,7 +55,7 @@ namespace vmem
         // Physical memory is a shared object mirrored at three windows:
         // remapping would break the aliasing, so zero it in place.
 #ifdef _WIN32
-        if (m_base >= 0xA0000000 || !winmem::ResetPages(host, bytes))
+        if (m_base >= 0xA0000000 || !platform::ResetPrivatePages(host, bytes))
             memset(host, 0, bytes);
 #else
         if (m_base >= 0xA0000000)

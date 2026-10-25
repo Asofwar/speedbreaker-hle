@@ -51,9 +51,11 @@ namespace
     constexpr uint32_t INVALID_SOCKET_ = 0xFFFFFFFF;
     constexpr int SOCKET_ERROR_ = -1;
     // Winsock error numbers the game may test for.
+#ifndef WSAEWOULDBLOCK  // (<windows.h> has them, with the same values)
     constexpr uint32_t WSAEWOULDBLOCK = 10035, WSAEINPROGRESS = 10036, WSAENOTSOCK = 10038, WSAEINVAL = 10022, WSAECONNRESET = 10054,
                        WSAECONNREFUSED = 10061, WSAEADDRINUSE = 10048, WSAETIMEDOUT = 10060, WSAENOTCONN = 10057, WSAEMSGSIZE = 10040,
                        WSAEOPNOTSUPP = 10045, WSAEFAULT = 10014, WSAEAFNOSUPPORT = 10047, WSAENETUNREACH = 10051, WSAEHOSTUNREACH = 10065;
+#endif
 
     // NFSMW_NET_LOG=1: the guest call chain of the importing function (its return address, then each caller's), to see which game code makes a network call.
     void LogChain(const char* what)

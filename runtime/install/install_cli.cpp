@@ -18,7 +18,11 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <platform/os.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace install
 {
@@ -43,22 +47,40 @@ namespace install
             InterruptGuard()
             {
                 s_cancel.store(false);
+#ifdef _WIN32
+                // The C runtime's SIGINT is Ctrl-C (and Ctrl-Break), through
+                // a console control handler, and it resets itself as
+                // SA_RESETHAND does.
+                previousInt = signal(SIGINT, OnInterrupt);
+                previousTerm = signal(SIGTERM, OnInterrupt);
+#else
                 struct sigaction sa{};
                 sa.sa_handler = OnInterrupt;
                 sa.sa_flags = SA_RESETHAND;
                 sigemptyset(&sa.sa_mask);
                 sigaction(SIGINT, &sa, &previousInt);
                 sigaction(SIGTERM, &sa, &previousTerm);
+#endif
             }
 
             ~InterruptGuard()
             {
+#ifdef _WIN32
+                signal(SIGINT, previousInt);
+                signal(SIGTERM, previousTerm);
+#else
                 sigaction(SIGINT, &previousInt, nullptr);
                 sigaction(SIGTERM, &previousTerm, nullptr);
+#endif
             }
 
         private:
+#ifdef _WIN32
+            void (*previousInt)(int) = SIG_DFL;
+            void (*previousTerm)(int) = SIG_DFL;
+#else
             struct sigaction previousInt{}, previousTerm{};
+#endif
         };
 
         // One rewritten status line on a terminal; a line per file otherwise

@@ -33,8 +33,10 @@ static_assert(settings::keynames::Code("a") == SDL_SCANCODE_A && settings::keyna
 
 namespace
 {
+#ifndef ERROR_SUCCESS  // (<windows.h> has these, with the same values)
     constexpr uint32_t ERROR_SUCCESS = 0;
     constexpr uint32_t ERROR_DEVICE_NOT_CONNECTED = 0x48F;
+#endif
 
     struct Pad
     {
@@ -1429,7 +1431,9 @@ namespace
     };
     static_assert(sizeof(Keystroke) == 8);
 
+#ifndef ERROR_EMPTY
     constexpr uint32_t ERROR_EMPTY = 0x10D2;
+#endif
 
     uint32_t NextKeystroke(Keystroke* out)
     {

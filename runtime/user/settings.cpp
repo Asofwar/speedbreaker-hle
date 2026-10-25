@@ -24,7 +24,13 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <platform/os.h>
+#else
 #include <unistd.h>
+#endif
+
+#include <platform/file_io.h>
 #ifdef __APPLE__
 #include <TargetConditionals.h>  // TARGET_OS_IOS: __APPLE__ alone means macOS or iOS
 #endif
@@ -636,6 +642,7 @@ namespace settings
         double s_baseline[kCount]{};               // stored values as last loaded or saved (Dirty)
         std::atomic<double> s_deviceDefault[kCount]{};  // SetDeviceDefault's, where s_hasDeviceDefault
         std::atomic<bool> s_hasDeviceDefault[kCount]{};
+        bool s_inFile[kCount]{};                   // settings.toml holds it (the last Load read it, or a Save wrote it)
         bool s_frozen = false;                     // Restart options hold their launch values (first Load)
         std::mutex s_saveMutex;                    // whole saves, so the last snapshot is the last file
 
@@ -1097,7 +1104,7 @@ namespace settings
         // of a regular file.
         ReadStatus ReadFile(const std::filesystem::path& path, std::string& out, std::string& error)
         {
-            int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+            int fd = platform::OpenFile(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
             if (fd < 0)
             {
                 if (errno == ENOENT)
@@ -1105,15 +1112,15 @@ namespace settings
                 error = strerror(errno);
                 return ReadStatus::Failed;
             }
-            struct stat st;
-            if (fstat(fd, &st) != 0)
+            platform::FileInfo st;
+            if (platform::InfoOf(fd, st) != 0)
                 error = strerror(errno);
-            else if (S_ISDIR(st.st_mode))
+            else if (st.directory)
                 error = "it's a folder";
-            else if (!S_ISREG(st.st_mode))
+            else if (!st.regular)
                 error = "it isn't a regular file";
-            else if (uint64_t(st.st_size) > kMaxFileSize)
-                error = std::format("it's {} KB, too big for a settings file", uint64_t(st.st_size) / 1024);
+            else if (st.size > kMaxFileSize)
+                error = std::format("it's {} KB, too big for a settings file", st.size / 1024);
             if (!error.empty())
             {
                 close(fd);
@@ -1284,13 +1291,13 @@ namespace settings
             RemoveStaleTemps(target);
             std::filesystem::path temp = target;
             temp += std::format(".{}.tmp", long(getpid()));
-            int fd = open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+            int fd = platform::OpenFile(temp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
             if (fd < 0 && errno == EEXIST)
             {
                 // Saves within a process are serialised, so this was left by
                 // a crashed process that had the same pid.
-                unlink(temp.c_str());
-                fd = open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+                platform::RemoveFile(temp);
+                fd = platform::OpenFile(temp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
             }
             if (fd < 0)
                 return std::format("can't write {}: {}", target.string(), strerror(errno));
@@ -1318,20 +1325,25 @@ namespace settings
                 error = errno;
             if (error)
             {
-                unlink(temp.c_str());
+                platform::RemoveFile(temp);
                 return std::format("can't write {}: {}", target.string(), strerror(error));
             }
-            if (rename(temp.c_str(), target.c_str()) != 0)
+            // (Windows: MoveFileExW, which replaces the old file in one step
+            // too; a plain _wrename would fail on every save after the first.)
+            if ((error = platform::AtomicReplace(temp, target)) != 0)
             {
-                error = errno;
-                unlink(temp.c_str());
+                platform::RemoveFile(temp);
                 return std::format("can't replace {}: {}", target.string(), strerror(error));
             }
-            if (int dirFd = open((dir.empty() ? std::filesystem::path(".") : dir).c_str(), O_RDONLY | O_CLOEXEC); dirFd >= 0)
+#ifdef _WIN32
+            platform::SyncDirectory(dir);  // (nothing to do on NTFS)
+#else
+            if (int dirFd = open(dir.empty() ? "." : dir.c_str(), O_RDONLY | O_CLOEXEC); dirFd >= 0)
             {
                 fsync(dirFd);  // best effort: some file systems refuse it on directories
                 close(dirFd);
             }
+#endif
             return "";
         }
 
@@ -1414,13 +1426,41 @@ namespace settings
         std::optional<double> v = Normalize(o, value);
         if (!v)
             return;
+        std::string note;
+        bool changed = false;
         {
             std::lock_guard lock(s_mutex);
+            double previous = Default(i);
             s_deviceDefault[i].store(*v, std::memory_order_relaxed);
             s_hasDeviceDefault[i].store(true, std::memory_order_release);
+            if (detail::g_state.load(std::memory_order_relaxed) == 2)
+            {
+                // After Load (a GPU's defaults: its device exists only once
+                // the window does): the stored value becomes what Load would
+                // have given, unless the file holds the option, something
+                // set it since, or it applies at a restart.
+                double stored = s_stored[i].load(std::memory_order_relaxed);
+                if (s_inFile[i])
+                    note = std::format("; settings.toml's {} stays", TomlValue(o, stored));
+                else if (stored != previous || s_baseline[i] != previous)
+                    note = std::format("; {} (set since the start) stays", TomlValue(o, stored));
+                else if (o.apply == Apply::Restart)
+                    note = "; too late for this run's stored value";
+                else if (stored != *v)
+                {
+                    s_stored[i].store(*v, std::memory_order_relaxed);
+                    s_baseline[i] = *v;  // not a change to save: Save would write it, a later Load give it
+                    changed = RecomputeLocked(i);
+                    detail::g_generation.fetch_add(1, std::memory_order_release);
+                }
+            }
+            if (s_envSet[i].load(std::memory_order_relaxed))
+                note += std::format("; {} overrides it for this run", o.env);
         }
         fprintf(stderr, "[settings] %s.%s defaults to %s on this device (%s)%s\n", o.table, o.key, TomlValue(o, *v).c_str(),
-            std::string(why).c_str(), detail::g_state.load(std::memory_order_acquire) == 2 ? "; too late for this run's stored value" : "");
+            std::string(why).c_str(), note.c_str());
+        if (changed)
+            Notify({ &id, 1 });
     }
 
     double DefaultValue(Id id)
@@ -1775,6 +1815,7 @@ namespace settings
                 double stored = fileValues[i].value_or(Default(i));
                 s_stored[i].store(stored, std::memory_order_relaxed);
                 s_baseline[i] = stored;
+                s_inFile[i] = fileValues[i].has_value();
                 ReadEnvLocked(i, true);
                 if (RecomputeLocked(i))
                     changed.push_back(Id(i));
@@ -1825,6 +1866,8 @@ namespace settings
                 std::copy(values.begin(), values.end(), s_baseline);
                 if (LoadedPath().empty())
                     LoadedPath() = path;
+                if (path == LoadedPath())
+                    std::fill(std::begin(s_inFile), std::end(s_inFile), true);  // a save writes every option
             }
         }
         if (!error.empty())
@@ -1936,7 +1979,8 @@ namespace settings
         ReadStatus status = ReadFile(path, text, error);
         if (status == ReadStatus::Failed)
         {
-            fprintf(stderr, "[settings] the refresh notice's %d Hz isn't recorded: can't read %s: %s\n", hz, path.string().c_str(), error.c_str());
+            fprintf(stderr, "[settings] the refresh notice's %d Hz isn't recorded: can't read %s: %s\n", hz, path.string().c_str(),
+                error.c_str());
             return false;
         }
         if (status == ReadStatus::Missing)

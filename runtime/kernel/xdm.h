@@ -8,7 +8,7 @@
 #define OBJECT_SIGNATURE           (uint32_t)'XBOX'
 #define GUEST_INVALID_HANDLE_VALUE 0xFFFFFFFF
 
-#if !defined(_WIN32) || defined(SB_FAKE_WINDOWS_GUARD)  // Windows port: windows.h is kept out, so these are ours
+#ifndef _WIN32
 
 #define S_OK                       0x00000000
 #define FALSE                      0x00000000

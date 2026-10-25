@@ -835,7 +835,11 @@ namespace ui
                 // or to the reason it failed. The toast has the whole text.
                 if (ImGui::CalcTextSize(message.c_str()).x > ImGui::GetContentRegionAvail().x)
                 {
+#ifdef _WIN32
+                    size_t cut = saved ? message.find_last_of("\\/") : message.rfind(": ");
+#else
                     size_t cut = saved ? message.rfind('/') : message.rfind(": ");
+#endif
                     if (saved && cut == std::string::npos && (cut = message.rfind(": ")) != std::string::npos)
                         cut++;  // iOS: "Saved to the Files app, SpeedBreaker folder: <name>"
                     if (cut != std::string::npos)

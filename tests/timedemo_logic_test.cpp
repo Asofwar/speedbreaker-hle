@@ -351,7 +351,7 @@ namespace
             CHECK(wait != std::string::npos && at - wait < 400 && renderer != std::string::npos && renderer - at < 200,
                 "after the saves, before the renderer stops (the guest still runs)");
         }
-        CHECK(Before(main, "timedemo::Start(sha);", "pthread_create(&thread"), "the timedemo starts before the guest");
+        CHECK(Before(main, "timedemo::Start(sha);", "platform::StartThread(&thread"), "the timedemo starts before the guest");
         CHECK(Count(main, "std::_Exit(bench::Enabled() ? bench::ExitCode() : 0);") == 3, "a benchmark's status as the exit code (all three ways out)");
 
         std::string ui = Read(rt + "/ui/ui.cpp");

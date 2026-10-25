@@ -6,14 +6,8 @@
 // GPL-3.0-or-later.
 #pragma once
 #ifdef _WIN32
-// XenonUtils/xbox.h includes <windows.h> on Windows, whose macros (FILE_OPEN,
-// DUPLICATE_CLOSE_SOURCE, RtlCompareMemory, ...) collide with the kernel names
-// the runtime implements. Claim mingw's include guard so it stays out;
-// compat/win/win_compat.cpp, which needs the real thing, undefines it first.
-#ifndef _INC_WINDOWS
-#define _INC_WINDOWS 1
-#define SB_FAKE_WINDOWS_GUARD 1
-#endif
+// Since upstream's Windows port (v0.1.9 Windows beta 1) the runtime takes
+// <windows.h> in every source, as xbox.h includes it: no longer kept out.
 #ifdef __cplusplus
 #include <csignal>
 #include <cerrno>

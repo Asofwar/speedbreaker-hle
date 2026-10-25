@@ -15,7 +15,32 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
+
+#include <platform/file_io.h>
+
+#ifdef __MINGW32__
+// MinGW-w64's <winnt.h> has the kernel's own names below as macros
+// (Microsoft's keeps them in the DDK): the guest's are these.
+#undef FILE_SUPERSEDE
+#undef FILE_OPEN
+#undef FILE_CREATE
+#undef FILE_OPEN_IF
+#undef FILE_OVERWRITE
+#undef FILE_OVERWRITE_IF
+#undef FILE_SUPERSEDED
+#undef FILE_OPENED
+#undef FILE_CREATED
+#undef FILE_OVERWRITTEN
+#undef FILE_EXISTS
+#undef FILE_DOES_NOT_EXIST
+#undef FILE_DIRECTORY_FILE
+#undef FILE_SYNCHRONOUS_IO_ALERT
+#undef FILE_SYNCHRONOUS_IO_NONALERT
+#undef FILE_NON_DIRECTORY_FILE
+#endif
 
 namespace
 {
@@ -39,8 +64,10 @@ namespace
     constexpr uint32_t FILE_NON_DIRECTORY_FILE = 0x40;
     // Access.
     constexpr uint32_t GENERIC_WRITE_ = 0x40000000;
+#ifndef FILE_WRITE_DATA  // (<windows.h> has these two, with the same values)
     constexpr uint32_t FILE_WRITE_DATA = 0x0002;
     constexpr uint32_t FILE_APPEND_DATA = 0x0004;
+#endif
     // Attributes.
     constexpr uint32_t ATTR_READONLY = 0x01;
     constexpr uint32_t ATTR_DIRECTORY = 0x10;
@@ -59,19 +86,13 @@ namespace
     // rewritten is its temporary file, not the old one still at its path.
     std::optional<HostAttributes> Stat(const std::filesystem::path& path, bool readOnly, int fd = -1)
     {
-        struct stat st;
-        if ((fd >= 0 ? fstat(fd, &st) : stat(path.c_str(), &st)) != 0)
+        platform::FileInfo st;
+        if ((fd >= 0 ? platform::InfoOf(fd, st) : platform::InfoOf(path, st)) != 0)
             return std::nullopt;
         HostAttributes a;
-        bool dir = S_ISDIR(st.st_mode);
-        a.size = dir ? 0 : uint64_t(st.st_size);
-#ifdef __APPLE__
-        int64_t sec = st.st_mtimespec.tv_sec, nsec = st.st_mtimespec.tv_nsec;
-#elif defined(_WIN32)
-        int64_t sec = st.st_mtime, nsec = 0;
-#else
-        int64_t sec = st.st_mtim.tv_sec, nsec = st.st_mtim.tv_nsec;
-#endif
+        bool dir = st.directory;
+        a.size = dir ? 0 : st.size;
+        int64_t sec = st.modifiedSeconds, nsec = st.modifiedNanoseconds;
         a.writeTime = uint64_t(sec * 10000000 + nsec / 100 + FILETIME_EPOCH_DIFFERENCE);
         a.attributes = dir ? ATTR_DIRECTORY : ATTR_NORMAL;
         if (readOnly)
@@ -339,7 +360,7 @@ uint32_t NtCreateFile(be<uint32_t>* handleOut, uint32_t desiredAccess, XOBJECT_A
         }
         else
         {
-            file->fd = open(resolved->host.c_str(), flags, 0644);
+            file->fd = platform::OpenFile(resolved->host, flags, 0644);
             if (file->fd < 0)
             {
                 DestroyKernelObject(file);
@@ -388,13 +409,13 @@ uint32_t NtReadFile(uint32_t fileHandle, uint32_t eventHandle, uint32_t apcRouti
     ssize_t n = 0;
     while (uint32_t(n) < length)
     {
-        ssize_t got = pread(file->fd, dst + n, length - uint32_t(n), off_t(pos + uint64_t(n)));
+        int64_t got = platform::ReadAt(file->fd, dst + n, length - uint32_t(n), pos + uint64_t(n));
         if (got < 0 && errno == EFAULT)
         {
             static thread_local std::vector<uint8_t> bounce;
             bounce.resize(length - uint32_t(n));
             do
-                got = pread(file->fd, bounce.data(), bounce.size(), off_t(pos + uint64_t(n)));
+                got = platform::ReadAt(file->fd, bounce.data(), bounce.size(), pos + uint64_t(n));
             while (got < 0 && errno == EINTR);
             if (got > 0)
                 memcpy(dst + n, bounce.data(), size_t(got));
@@ -452,13 +473,13 @@ uint32_t NtWriteFile(uint32_t fileHandle, uint32_t eventHandle, uint32_t apcRout
     int error = 0;
     while (n < length)
     {
-        ssize_t put = pwrite(file->fd, src + n, length - n, off_t(pos + n));
+        ssize_t put = platform::WriteAt(file->fd, src + n, length - n, pos + n);
         if (put < 0 && errno == EFAULT)
         {
             static thread_local std::vector<uint8_t> bounce;
             bounce.assign(src + n, src + length);
             do
-                put = pwrite(file->fd, bounce.data(), bounce.size(), off_t(pos + n));
+                put = platform::WriteAt(file->fd, bounce.data(), bounce.size(), pos + n);
             while (put < 0 && errno == EINTR);
         }
         if (put < 0 && errno == EINTR)
@@ -593,7 +614,7 @@ uint32_t NtSetInformationFile(uint32_t fileHandle, XIO_STATUS_BLOCK* iosb, uint8
         if (length < 8) return STATUS_INFO_LENGTH_MISMATCH;
         if (file->readOnly || !file->writable || file->fd < 0)
             status = STATUS_ACCESS_DENIED;
-        else if (ftruncate(file->fd, off_t(uint64_t(*reinterpret_cast<be<uint64_t>*>(info)))) != 0)
+        else if (platform::Truncate(file->fd, uint64_t(*reinterpret_cast<be<uint64_t>*>(info))) != 0)
         {
             status = STATUS_UNSUCCESSFUL;
             if (file->staged)

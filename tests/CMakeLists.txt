@@ -20,12 +20,33 @@ function(sb_test name)
     add_executable(${name} ${CMAKE_CURRENT_SOURCE_DIR}/${name}.cpp ${T_SOURCES})
     target_include_directories(${name} PRIVATE ${RT})
     target_link_libraries(${name} PRIVATE Threads::Threads)
-    target_compile_options(${name} PRIVATE -O2 -UNDEBUG)
+    if(SB_MSVC_FRONTEND)
+        target_compile_options(${name} PRIVATE /O2 -UNDEBUG)
+    else()
+        target_compile_options(${name} PRIVATE -O2 -UNDEBUG)
+    endif()
     add_test(NAME ${name} COMMAND ${name} ${T_ARGS})
     if(T_LABELS)
         set_tests_properties(${name} PROPERTIES LABELS "${T_LABELS}")
     endif()
 endfunction()
+
+# user/settings.cpp makes its file calls through the platform layer
+# (platform/file_io.h, the Windows port's): each test that links it links
+# that layer as well (Windows: its folders too, with their system libraries).
+if(WIN32)
+    set(SB_SETTINGS_SOURCES ${RT}/user/settings.cpp ${RT}/platform/win32/file_io.cpp ${RT}/platform/win32/folders.cpp)
+    set(SB_SETTINGS_LIBS shell32 ole32)
+else()
+    set(SB_SETTINGS_SOURCES ${RT}/user/settings.cpp ${RT}/platform/posix/file_io.cpp)
+    set(SB_SETTINGS_LIBS)
+endif()
+# The platform layer's files alone (the installer's tests).
+if(WIN32)
+    set(SB_FILE_IO_SOURCES ${RT}/platform/win32/file_io.cpp ${RT}/platform/win32/folders.cpp)
+else()
+    set(SB_FILE_IO_SOURCES ${RT}/platform/posix/file_io.cpp)
+endif()
 
 sb_test(block_ranges_test)
 # Where guest memory and the upload ring go (gpu/memory_plan.h, header only).
@@ -170,7 +191,8 @@ endif()
 # Upscaling's values in settings.toml (user/settings.cpp as the game links
 # it): "fsr1" read, saved and read back, the environment's override, an
 # unknown value; in a scratch folder.
-sb_test(settings_scaling_test SOURCES ${RT}/user/settings.cpp ARGS ${CMAKE_CURRENT_BINARY_DIR}/settings_scaling_scratch)
+sb_test(settings_scaling_test SOURCES ${SB_SETTINGS_SOURCES} ARGS ${CMAKE_CURRENT_BINARY_DIR}/settings_scaling_scratch)
+target_link_libraries(settings_scaling_test PRIVATE ${SB_SETTINGS_LIBS})
 # Internal Resolution Auto's budget on iPhones and iPads, chip by chip
 # (video/scale_budget.cpp), and the scale it makes on the phones' screens.
 sb_test(scale_budget_test SOURCES ${RT}/video/scale_budget.cpp ${RT}/video/picture_fit.cpp)
@@ -183,19 +205,24 @@ sb_test(display_tone_test ARGS ${RT}/video/presenter.cpp ${RT}/user/settings.cpp
 # The display's refresh measured from present completions, at 60 Hz and at
 # whole multiples of it (video/refresh_fit.cpp, video/refresh_multiple.h).
 sb_test(refresh_fit_test SOURCES ${RT}/video/refresh_fit.cpp)
+# The [perf] "repeated" count in the panel's own refreshes (video/repeats.h,
+# header only; the Windows presenter's).
+sb_test(repeats_test)
 # The one-time notice on a screen whose rate 60 fps can't divide evenly (90,
 # 144, 165 Hz): when it shows (variable refresh, Game Mode, a Mac's ProMotion,
 # dismissed, the moment), its words, the grid check under it, and the
 # dismissal in settings.toml, in a scratch folder (video/refresh_notice.h,
 # user/settings.cpp).
-sb_test(refresh_notice_test SOURCES ${RT}/video/refresh_fit.cpp ${RT}/user/settings.cpp
+sb_test(refresh_notice_test SOURCES ${RT}/video/refresh_fit.cpp ${SB_SETTINGS_SOURCES}
     ARGS ${CMAKE_CURRENT_BINARY_DIR}/refresh_notice_scratch)
+target_link_libraries(refresh_notice_test PRIVATE ${SB_SETTINGS_LIBS})
 # The one-time note that an Xbox controller by USB on a Mac takes no rumble
 # (hid/rumble_note.h): a wired Xbox pad on a Mac gets it once, a DualSense
 # wired, an Xbox pad over Bluetooth and other platforms never; the dismissal
 # in settings.toml, in a scratch folder (user/settings.cpp).
-sb_test(rumble_note_test SOURCES ${RT}/user/settings.cpp
+sb_test(rumble_note_test SOURCES ${SB_SETTINGS_SOURCES}
     ARGS ${CMAKE_CURRENT_BINARY_DIR}/rumble_note_scratch)
+target_link_libraries(rumble_note_test PRIVATE ${SB_SETTINGS_LIBS})
 # How late the guest vblank's thread wakes on this machine, alone and with
 # every core busy (video/vblank_timer.cpp; checked on macOS, where its
 # scheduling changed in v0.1.4). Its thresholds (1.5 ms in 99% of vblanks,
@@ -262,6 +289,9 @@ sb_test(hfr_grid_test)
 # The guest clock across suspensions, on real sleeps: its thresholds hold on a
 # quiet machine, not under a parallel ctest or on a shared CI runner (timing).
 sb_test(guest_time_test SOURCES ${RT}/cpu/guest_time.cpp LABELS timing)
+if(WIN32)
+    target_link_libraries(guest_time_test PRIVATE winmm)  # timeBeginPeriod
+endif()
 # When the mouse cursor shows over the game (ui/cursor_idle.h, header only),
 # and how ui.cpp drives it.
 sb_test(cursor_idle_test ARGS ${RT}/ui/ui.cpp)
@@ -277,15 +307,50 @@ if(Python3_FOUND)
     # scripts/compare_shots.py on made-up timedemo frame images.
     add_test(NAME compare_shots_test COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/compare_shots_test.py)
 endif()
+# Crash and hang reports: which symbols are recompiled functions, and the
+# home folder scrubbed from a bug report (both header only).
+sb_test(symbol_names_test)
+sb_test(scrub_test)
+if(WIN32)
+    # Windows' stacks and names (platform/stack.h: DbgHelp, StackWalk64,
+    # another thread's stack), against this test's own PDB: its main file
+    # with debug information, and a file of functions shaped as the
+    # recompiled ones without any, as ppc/ is built.
+    sb_test(win_stack_test SOURCES ${RT}/platform/win32/stack.cpp ${CMAKE_CURRENT_SOURCE_DIR}/win_stack_test_guest.cpp)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/win_stack_test.cpp ${RT}/platform/win32/stack.cpp PROPERTIES
+        COMPILE_OPTIONS /Z7)
+    target_link_options(win_stack_test PRIVATE /DEBUG /OPT:REF /OPT:NOICF)
+    target_link_libraries(win_stack_test PRIVATE dbghelp)
+endif()
+# Where the per-user folders go, and the platform layer's file calls.
+sb_test(paths_test)
+if(WIN32)
+    sb_test(file_io_test SOURCES ${RT}/platform/win32/file_io.cpp ARGS ${CMAKE_CURRENT_BINARY_DIR}/file_io_out)
+    target_sources(paths_test PRIVATE ${RT}/platform/win32/folders.cpp)
+    target_link_libraries(paths_test PRIVATE shell32 ole32)
+else()
+    sb_test(file_io_test SOURCES ${RT}/platform/posix/file_io.cpp ARGS ${CMAKE_CURRENT_BINARY_DIR}/file_io_out)
+endif()
+# Settings: a device's own defaults, before and after Load.
+if(WIN32)
+    sb_test(settings_test SOURCES ${RT}/user/settings.cpp ${RT}/platform/win32/file_io.cpp ${RT}/platform/win32/folders.cpp
+        ARGS ${CMAKE_CURRENT_BINARY_DIR}/settings_out)
+    target_link_libraries(settings_test PRIVATE shell32 ole32)
+else()
+    sb_test(settings_test SOURCES ${RT}/user/settings.cpp ${RT}/platform/posix/file_io.cpp
+        ARGS ${CMAKE_CURRENT_BINARY_DIR}/settings_out)
+endif()
+target_include_directories(settings_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
 # "Choose a folder..." in the installer (install/placement.h): where the game
 # goes in a picked folder and what is refused, on planted facts and in a
-# scratch folder with a sandbox HOME. POSIX only (mkdtemp, chmod, ACLs and
+# scratch folder with a sandbox HOME (the installer's file calls through the
+# platform layer, platform/file_io.h). POSIX only (mkdtemp, chmod, ACLs and
 # links in its disk checks); the screen hides the entry on Windows until
 # placement.cpp is ported there.
 if(NOT WIN32)
     sb_test(install_folder_test SOURCES ${RT}/install/placement.cpp ${RT}/install/installer.cpp ${RT}/install/locate.cpp
         ${RT}/install/manifest.cpp ${RT}/install/result.cpp ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp
-        ${RT}/user/portable.cpp
+        ${RT}/user/portable.cpp ${RT}/platform/posix/file_io.cpp
         ARGS ${CMAKE_BINARY_DIR}/install_folder_scratch)  # not beside the test: that's its "own folder", refused
     # Portable mode (user/portable.h) and --portable on|off
     # (install/portable_switch.h): the layout, the records that move with
@@ -293,7 +358,7 @@ if(NOT WIN32)
     # the copies (a stand-in copies the game), in a scratch folder.
     sb_test(portable_test SOURCES ${RT}/user/portable.cpp ${RT}/install/portable_switch.cpp ${RT}/install/placement.cpp
         ${RT}/install/installer.cpp ${RT}/install/locate.cpp ${RT}/install/manifest.cpp ${RT}/install/result.cpp
-        ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp
+        ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp ${RT}/platform/posix/file_io.cpp
         ARGS ${CMAKE_BINARY_DIR}/portable_scratch)
     # The game folder checks startup makes before any of the game runs
     # (install/installer.h: CheckInstalledFiles, every file by stat in any case;
@@ -301,7 +366,7 @@ if(NOT WIN32)
     # scratch folder.
     sb_test(startup_game_files_test SOURCES ${RT}/install/placement.cpp ${RT}/install/installer.cpp ${RT}/install/locate.cpp
         ${RT}/install/manifest.cpp ${RT}/install/result.cpp ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp
-        ${RT}/user/portable.cpp
+        ${RT}/user/portable.cpp ${SB_FILE_IO_SOURCES}
         ARGS ${CMAKE_BINARY_DIR}/startup_game_files_scratch)
     if(APPLE AND NOT IOS)
         target_link_libraries(install_folder_test PRIVATE "-framework CoreFoundation")  # placement.cpp's iCloud check
@@ -376,13 +441,16 @@ set_target_properties(key_names_test PROPERTIES SKIP_BUILD_RPATH OFF)
 # The Key options (Settings > Controls): the table, the [keys] names in the
 # file, and what Set accepts (user/settings.cpp and the toml++ XenonRecomp
 # vendors; no SDL).
-sb_test(settings_quality_test SOURCES ${RT}/user/settings.cpp)
-sb_test(settings_keys_test SOURCES ${RT}/user/settings.cpp)
+sb_test(settings_quality_test SOURCES ${SB_SETTINGS_SOURCES})
+target_link_libraries(settings_quality_test PRIVATE ${SB_SETTINGS_LIBS})
+sb_test(settings_keys_test SOURCES ${SB_SETTINGS_SOURCES})
+target_link_libraries(settings_keys_test PRIVATE ${SB_SETTINGS_LIBS})
 target_include_directories(settings_keys_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
 # Settings > Game > Language (game/language.h, header only, and the option in
 # user/settings.cpp): English untouched for every caller, the game's ten
 # languages, the movie suffix by the files present, what the files give.
-sb_test(language_test SOURCES ${RT}/user/settings.cpp)
+sb_test(language_test SOURCES ${SB_SETTINGS_SOURCES})
+target_link_libraries(language_test PRIVATE ${SB_SETTINGS_LIBS})
 target_include_directories(language_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
 # The keyboard's controls and how held keys become a pad (hid/key_map.h), header only.
 sb_test(key_map_test)
@@ -441,9 +509,17 @@ if(EXISTS ${ROOT}/ppc/ppc_config.h AND EXISTS ${ROOT}/tools/XenonRecomp/XenonUti
     # (16 KB on Apple): only whole host pages remapped, so a 4 KB-page heap's
     # neighbouring allocation in the same host page survives (kernel/vmem.cpp; the
     # host page size injected, so 16 and 64 KB are checked on any host).
-    sb_test(vmem_host_pages_test SOURCES ${RT}/kernel/vmem.cpp)
-    target_include_directories(vmem_host_pages_test PRIVATE ${RT}/kernel ${RT}/thirdparty/o1heap ${ROOT}/ppc
-        ${ROOT}/tools/XenonRecomp/XenonUtils ${ROOT}/tools/XenonRecomp/thirdparty/simde)
+    if(NOT WIN32)  # POSIX mappings; Windows' host pages are 4 KB (guest pages)
+        sb_test(vmem_host_pages_test SOURCES ${RT}/kernel/vmem.cpp)
+        target_include_directories(vmem_host_pages_test PRIVATE ${RT}/kernel ${RT}/thirdparty/o1heap ${ROOT}/ppc
+            ${ROOT}/tools/XenonRecomp/XenonUtils ${ROOT}/tools/XenonRecomp/thirdparty/simde)
+    endif()
+    if(WIN32)
+        # The mirrors (platform/win32/memory.cpp) and the page protection.
+        target_sources(write_watch_test PRIVATE ${RT}/platform/win32/memory.cpp ${RT}/platform/win32/os.cpp)
+        # The process-wide settings main makes first (platform/startup.h).
+        sb_test(startup_test SOURCES ${RT}/platform/win32/startup.cpp)
+    endif()
 else()
     message(STATUS "write_watch_test, kernel_dispatcher_test and vmem_host_pages_test left out: they need ppc/ (scripts/recompile.sh) and tools/XenonRecomp (scripts/setup_tools.sh)")
 endif()

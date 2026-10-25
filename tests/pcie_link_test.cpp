@@ -42,7 +42,13 @@ static void Parsing()
 static void Folder(const std::filesystem::path& root)
 {
     // The slot (root port) and the GPU under it, as /sys/devices lays them out.
+    // (Windows, where the test builds too: ':' can't be in a folder name, and
+    // the reader doesn't look at the names.)
+#ifdef _WIN32
+    std::filesystem::path port = root / "0000-00-01.1", gpu = port / "0000-01-00.0";
+#else
     std::filesystem::path port = root / "0000:00:01.1", gpu = port / "0000:01:00.0";
+#endif
     std::filesystem::create_directories(gpu);
     Put(port / "max_link_speed", "8.0 GT/s PCIe\n");
     Put(port / "max_link_width", "16\n");
@@ -78,7 +84,7 @@ static void Folder(const std::filesystem::path& root)
 int main()
 {
     Parsing();
-    std::filesystem::path root = std::filesystem::temp_directory_path() / ("pcie_link_test_" + std::to_string(std::rand()) + std::to_string(long(&g_failures) & 0xFFFF));
+    std::filesystem::path root = std::filesystem::temp_directory_path() / ("pcie_link_test_" + std::to_string(std::rand()) + std::to_string(uintptr_t(&g_failures) & 0xFFFF));
     std::filesystem::remove_all(root);
     Folder(root);
     std::filesystem::remove_all(root);

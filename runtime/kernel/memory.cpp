@@ -3,7 +3,7 @@
 #include "../stdafx.h"
 #include "memory.h"
 #ifdef _WIN32
-#include <compat/win/win_mem.h>
+#include <platform/memory.h>
 #endif
 
 #ifndef _WIN32
@@ -124,9 +124,13 @@ bool Memory::MapPhysicalMirrors()
 Memory::Memory()
 {
 #ifdef _WIN32
-    base = winmem::CreateGuestMemory(PPC_MEMORY_SIZE, &failedStep, &failedError);
+    // SpeedBreaker: the same layout through placeholders: the physical
+    // windows alias one section, the rest is private (platform/memory.h).
+    // A view must fill its placeholder, so the 0xE window is unshifted.
+    base = platform::MapGuestSpace();
     if (base == nullptr)
         return;
+    eWindowShift = 0;
 #else
     // NFSMW_TEST_RESERVE_FAIL=1|2: fail the reservation or the mirrors as an
     // iOS without room would (memory_status.h), to see the startup message

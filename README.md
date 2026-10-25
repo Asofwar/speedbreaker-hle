@@ -208,7 +208,7 @@ belongs to its owners.</sub>
 | **Linux** (x86-64) | [Download][dl-steamos-x86_64] the x86-64 SteamOS build, `SpeedBreaker-steamos-x86_64.tar.xz`, or [build from source](#building-from-source) | Tested here on SteamOS. Players reported v0.1.1 working on Fedora 44 (GeForce GTX 1080 Ti) and Ubuntu 24.04 (Intel Arc 140T). Other setups: reports welcome. |
 | **Mac** (Apple silicon) | [Download][dl-macos]<br>`SpeedBreaker-macos.dmg` | MacBook Pro (M1 Pro) on macOS 27 and Mac Studio (M4 Max) on macOS 26; macOS 15.6 (Sequoia) in a virtual machine. There is no Intel Mac build. |
 | **iPhone** and **iPad** | [Sideload the IPA](#iphone-and-ipad) (experimental), `SpeedBreaker-<version>-ios.ipa` on the [release page][releases], or [build it yourself](#iphone-and-ipad) with Xcode | iPhone 15 Pro Max and iPhone 18 Pro Max (iOS 27). iPad Pro 12.9-inch (M2, iPadOS 27) with a Backbone Pro. Not on the App Store. Those were Xcode-signed builds: the IPA itself hasn't been installed on a device yet. |
-| **Windows** | Coming soon | |
+| **Windows** (beta) | [Download][all-releases] `SpeedBreaker-0.1.9-windows-x64-beta.zip` from the Releases page; see [Windows (beta)](#windows-beta) | A laptop with Intel UHD Graphics (60 Hz). NVIDIA, AMD and recent Intel Arc graphics and 120/144 Hz monitors haven't been tested yet: [reports welcome](#reporting-a-bug). |
 | **Android** | Coming soon | |
 
 Each link downloads the newest release. Every file and its `.sha256` checksum file are on the
@@ -235,6 +235,8 @@ should say OK. What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
 - **Steam Frame** (the arm64 SteamOS download): SteamOS on the Steam Frame, kept up to date
   (v0.1.2 needs the September 2026 release or later). The arm64 download is for the Frame only;
   it hasn't been tested on any other arm64 Linux device.
+- **Windows (beta):** Windows 10 or 11, 64-bit; a CPU with AVX2 (Intel Haswell from 2013 or
+  newer, or any AMD Ryzen); a Vulkan 1.2 graphics card with a current driver.
 - **Mac:** Apple silicon and **macOS 15** (Sequoia) or later. The app won't open on older
   versions of macOS, and there is no Intel Mac build.
 - **iPhone and iPad:** iOS or iPadOS 17 or later, on an A15-class chip or newer (iPhone 13 and
@@ -248,7 +250,7 @@ should say OK. What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
    the extracted disc files. No title update is needed. SpeedBreaker doesn't provide game files
    or disc images, or link to them.
 2. **Get SpeedBreaker.** [Download it](#download) for Steam Deck, Steam Machine and Steam Frame
-   (SteamOS), Linux or Mac. On iPhone and iPad you sideload the experimental IPA or build it
+   (SteamOS), Linux, Mac or Windows (beta). On iPhone and iPad you sideload the experimental IPA or build it
    yourself. Then follow the
    [setup for your platform](#setup-by-platform).
 3. **Start it and install.** On first run, SpeedBreaker looks for your disc image, checks that
@@ -265,6 +267,7 @@ should say OK. What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
 
 - **Mac:** drag the new SpeedBreaker into Applications, choose **Replace**, then allow it once more with **Open Anyway** (see [Mac setup](#mac)).
 - **Steam Deck, Steam Machine, Steam Frame and Linux:** unpack the new download over the old folder (`~/Games/SpeedBreaker`); your Steam shortcut keeps working.
+- **Windows (beta):** extract the new zip into a new folder, run it from there, then delete the old folder.
 - **Everywhere:** your saves, settings and the installed game are kept, and no disc image is needed. Settings > Advanced > **Check for Updates** says when there's a new release, and so does GitHub's **Watch > Custom > Releases**.
 
 ## Setup by platform
@@ -379,6 +382,23 @@ launcher also turns on PRIME render offload. That hasn't been confirmed on a rea
 yet: the log's `[video] Vulkan devices:` line says which GPU it chose and why, and a report with
 that line from yours would help. To pick another, start it with `NFSMW_GPU=<its number or part of
 its name>`, e.g. `NFSMW_GPU=intel %command%` in Steam's launch options.
+
+### Windows (beta)
+
+The Windows version is a **beta**: so far it has been tested on one laptop with Intel UHD
+Graphics and a 60 Hz screen. Download `SpeedBreaker-0.1.9-windows-x64-beta.zip` from the
+[Releases page][all-releases], right-click it, choose **Extract All**, and double-click
+`SpeedBreaker.exe` in the extracted folder (not inside the zip). SpeedBreaker isn't signed, so
+Windows may say **"Windows protected your PC"**: click **More info**, then **Run anyway**.
+(Smart App Control, where it's on, offers no Run anyway.) The installer then works as on the
+other platforms: it looks for your `.iso` in your user folder, Downloads, Desktop, Documents and
+Games and on your other drives, or takes one (or an extracted disc folder) you browse for, and
+puts the game in `%LOCALAPPDATA%\SpeedBreaker`, where your saves, settings and logs go too.
+`README.txt` in the zip has the details. **Check for Updates** isn't available on Windows yet.
+
+Please [report](#reporting-a-bug) how it runs, especially on NVIDIA, AMD and Intel Arc
+graphics and on 120 or 144 Hz monitors, with "Windows beta" in the issue's title. Windows
+builds made by others aren't supported here.
 
 ### Mac
 
@@ -711,7 +731,7 @@ pull requests are handled.
 
 ## What's next
 
-- **Windows:** coming soon.
+- **Windows:** in [beta](#windows-beta) now; a full release once it has run on more PCs.
 - **Android:** coming soon.
 
 **One more thing… SpeedBreaker: Carbon, coming soon.** It's planned, not available yet.
@@ -795,6 +815,12 @@ The supported executable is 3,936,256 bytes, with SHA-256
 
 - **Other Linux distributions:** your distribution's equivalents of the package list above
   (Clang 18 or newer). Untested so far. The GPU needs Vulkan 1.2 and BC (DXT) texture support.
+- **Windows (beta):** the Visual Studio Build Tools (MSVC's libraries, the Windows SDK) with
+  LLVM's `clang-cl` 19 or newer, CMake and Ninja, and SDL3, glslang and FFmpeg's XMA decoder built
+  as static libraries with the static C runtime (`/MT`) into one folder. FFmpeg's configure
+  options are `scripts/build_ffmpeg_xma.sh`'s, with FFmpeg's MSVC toolchain; the Windows
+  third-party source archive on the release page has the exact build script. Step 2 runs on a
+  Mac or Linux; copy `ppc/` and `tools/XenonRecomp` to the Windows PC.
 - `gh`, logged in, is optional: it fetches Xenia's instruction tests.
 
 #### 2. Toolchain, your game files, recompilation
@@ -835,6 +861,17 @@ cmake -S . -B build/main -G Ninja -DCMAKE_BUILD_TYPE=Release \
 
 ninja -C build/main SpeedBreaker
 ```
+
+On Windows (beta), from an x64 Visual Studio developer prompt with `clang-cl` on `PATH`:
+
+```bat
+cmake -S . --preset windows-clang -DCMAKE_PREFIX_PATH=<deps folder> -DFFMPEG_XMA=<deps folder>
+ninja -C build\windows SpeedBreaker
+```
+
+`--preset windows-clang-tester` instead links it without a console window and labels it, as the
+download is; `python scripts\windows\make_zip.py --public ...` (its header lists the options)
+packages it with the license notices.
 
 Run `build/main/runtime/SpeedBreaker` from the repository root. With the whole disc extracted in
 `game/files`, it plays from there. Otherwise the first-run installer asks for your disc image.
@@ -952,6 +989,7 @@ SpeedBreaker is provided "as is", without warranty of any kind, as set out in th
 Public License.
 
 [releases]: https://github.com/SpeedBreakerProject/speedbreaker/releases/latest
+[all-releases]: https://github.com/SpeedBreakerProject/speedbreaker/releases
 [dl-steamos-x86_64]: https://github.com/SpeedBreakerProject/speedbreaker/releases/latest/download/SpeedBreaker-steamos-x86_64.tar.xz
 [dl-steamos-arm64]: https://github.com/SpeedBreakerProject/speedbreaker/releases/latest/download/SpeedBreaker-steamos-arm64.tar.xz
 [dl-macos]: https://github.com/SpeedBreakerProject/speedbreaker/releases/latest/download/SpeedBreaker-macos.dmg
