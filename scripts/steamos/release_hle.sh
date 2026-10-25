@@ -83,6 +83,20 @@ for l in mine:
     out.append(l)
 open(ours, "w", encoding="utf-8").write("\n".join(out) + "\n")
 PY
+# The multiplayer server (docs/MULTIPLAYER_GUIDE.md) next to the game, run
+# through the bundle's own loader and libraries as the game is.
+[ -x "$BUILD/runtime/mp_server" ] || { echo "release_hle.sh: no $BUILD/runtime/mp_server (ninja -C $BUILD mp_server)" >&2; exit 1; }
+strip -o "$STAGE/lib/mp_server" "$BUILD/runtime/mp_server"
+mkdir -p "$STAGE/multiplayer"
+cp scripts/mp/races.example.txt docs/MULTIPLAYER_GUIDE.md "$STAGE/multiplayer/"
+cat > "$STAGE/mp-server.sh" <<'SH'
+#!/bin/bash
+# The multiplayer server (multiplayer/MULTIPLAYER_GUIDE.md): mp-server.sh [port] [races file]
+# e.g. ./mp-server.sh 27960 multiplayer/races.example.txt
+DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$DIR/lib/glibc/ld-linux-x86-64.so.2" --library-path "$DIR/lib/glibc:$DIR/lib/cxx" "$DIR/lib/mp_server" "$@"
+SH
+chmod +x "$STAGE/mp-server.sh"
 echo "HLE fork release $TAG (https://github.com/$REPO): the C library and C++ runtime are v$VERSION's of the original project" >> "$STAGE/bundle-info.txt"
 (cd "$STAGE" && find . -type f ! -name SHA256SUMS -print0 | sort -z | sed -z 's|^\./||' | xargs -0 sha256sum > SHA256SUMS)
 
@@ -106,7 +120,7 @@ prev="$(git describe --tags --abbrev=0 --match 'v*-hle*' HEAD^ 2>/dev/null || ec
 # a bundle of main alone) would list the whole fork as its changes.
 [ "$prev" != "v$VERSION" ] || [ "$FORK" = "hle.1" ] || { echo "release_hle.sh: no earlier v$VERSION-hle.* tag behind HEAD (fetch the tags)" >&2; exit 1; }
 {
-    echo "SpeedBreaker v$VERSION with the HLE renderer work for the Steam Deck at 5 W and online races over the local network, a VPN or Steam (fork of $UP; online play: docs/online.md)."
+    echo "SpeedBreaker v$VERSION with the HLE renderer work for the Steam Deck at 5 W and online races over the local network, a VPN or Steam (fork of $UP; online play: docs/online.md). Multiplayer races and the open world with a server of your own: \`mp-server.sh\` (SteamOS) or \`mp_server.exe\` (Windows), docs/MULTIPLAYER_GUIDE.md."
     echo
     echo "Install: unpack \`SpeedBreaker-steamos-x86_64.tar.xz\` (for example into \`~/Games\`) and add \`SpeedBreaker/speedbreaker.sh\` to Steam as a non-Steam game; the installer asks for a backup of your own USA Xbox 360 disc. No game files are included."
     echo

@@ -29,6 +29,10 @@ mkdir -p "$STAGE/licenses" "$OUT/symbols"
 # The exe, stripped, and its debug information for crash reports.
 x86_64-w64-mingw32-objcopy --only-keep-debug "$EXE" "$OUT/symbols/SpeedBreaker-$VERSION-$REVISION-windows-x86_64.debug"
 x86_64-w64-mingw32-strip -o "$STAGE/SpeedBreaker.exe" "$EXE"
+# The multiplayer server (multiplayer/MULTIPLAYER_GUIDE.md), its races.
+x86_64-w64-mingw32-strip -o "$STAGE/mp_server.exe" "$BUILD/runtime/mp_server.exe"
+mkdir -p "$STAGE/multiplayer"
+cp "$ROOT/scripts/mp/races.example.txt" "$ROOT/docs/MULTIPLAYER_GUIDE.md" "$STAGE/multiplayer/"
 
 # No folder of the build machine in it (as make_bundle.sh checks the
 # SteamOS binary): the home folder only where a path starts.

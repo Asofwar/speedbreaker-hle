@@ -18,5 +18,5 @@ cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$ROOT/scripts/wind
     -DSB_WIN_DEPS="$DEPS" -DCMAKE_BUILD_TYPE=Release -DFFMPEG_XMA="$DEPS/ffmpeg-xma" -DCMAKE_PREFIX_PATH="$DEPS" \
     -DVulkan_INCLUDE_DIR="$DEPS/include" -DVulkan_LIBRARY="$DEPS/lib/libvulkan-1.a" > "$BUILD.configure.log" ||
     { tail -30 "$BUILD.configure.log" >&2; exit 1; }
-ninja -C "$BUILD" SpeedBreaker
+ninja -C "$BUILD" SpeedBreaker mp_server
 echo "build.sh: $BUILD/runtime/SpeedBreaker.exe"
