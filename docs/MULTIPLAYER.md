@@ -552,5 +552,4 @@ So the choice is made elsewhere: by a generator of the game's own with another f
 - Every draw's vertex buffers hashed whole (green against purple): the car shaders' buffers in the scene are the same; the only ones that differ are a shadow map's (another
   car in its frustum). So the colour isn't in the vertex data either.
 - Next, if picked up: a per-pixel attribution (which draw last wrote the rival car's pixels, by a readback after each draw of one frame), then that draw's every input compared
-  between runs; or, from the game side, where the opponent's car record gets its paint and vinyl part keys (the 408-byte customisation record the front end keeps for the player's
-  own car, +1124 of *0x82A2C684, is the place such keys live).
+  between runs. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
