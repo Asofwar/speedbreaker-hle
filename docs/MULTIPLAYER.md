@@ -532,5 +532,9 @@ So the choice is made elsewhere: by a generator of the game's own with another f
 - Then the vehicle's memory right after `MakeVehicle` (the RX-8 the first pool car, four runs: lime green, green and black, pink, teal): its owner object (0x200 bytes) and the
   0x100 bytes behind each heap pointer in it. Two runs with the same heap layout and different paint (lime, pink) have the same words everywhere outside the pointers, so the paint is
   not in that object or one level below it at that point: it is chosen later (as the car's model and textures stream in), or kept in an object the vehicle doesn't point to yet.
-  Next, if picked up: the same dump a few seconds later, after the files of the car are loaded (`CARS\RX8\...` opens), or a write watch on the car's texture/paint records found from
-  the streaming side.
+- The same 300 frames later (the model loaded; five runs: purple, green, copper, red with a white vinyl, purple with a white vinyl), two levels of pointers deep: about 5000
+  words differ between the runs, almost all geometry, streaming indices and floats; no small set follows the paint. The scripted preset rides (`sub_824EF790`, AndhikaFW's first
+  approach) are the game's named cars (the Blacklist's), not a car's stock look.
+- Meanwhile a player's own race car became the stock one (the SKIPFE path, see the lobby car), which looks the same in every run (a red RX-8, a black Supra), so what's missing is
+  making an opponent come out stock too. Next, if picked up: find where the SKIPFE path's request (the key from `sub_8214abb0` at 208(r1) in `sub_824729E0`, then `sub_82472878`)
+  differs from an opponent's (the racer collection in `sub_82333680`), and give a player's opponent the stock request.
