@@ -539,9 +539,9 @@ So the choice is made elsewhere: by a generator of the game's own with another f
   making an opponent come out stock too.
 - Not a shader constant: the pixel shaders' c0..c63 of one frame in three runs (yellow-green, turquoise, dark red RX-8, the same scene) differ only in one scalar that follows
   the draw order; so the paint and vinyl are in a texture (the car's skin is put together when it is made).
-- The RX-8's type key (0D928DCA F667ABA4) is in three places 5 s after the pool is made: its template (BAB575F0), a record at BBE32300 (the same address every run) and one more
-  block. In the record, the only word that isn't a pointer and differs between runs is the one 76 bytes after the key (2EC33B84, 40CE4984, 464DB15E: a random number). It is 0
-  while `sub_82333680` returns and filled during the vehicle's creation (7D3E2819 one frame later); holding it at one value from then on (600 frames) left the paint random (grey
-  and blue in two runs with the same value). So the paint is picked in the same call that writes that number, from the same generator.
-- Next, if picked up: find the writer of record+76 inside the creation (a store watch on that address, or the creation's calls logged), which leads to the game's own generator;
-  seed it from the player's id and car while a player's opponent is made, and every machine picks the same paint (the owner's own needs the owner's choice sent along).
+- A lead that wasn't one: the RX-8's type key sits 76 bytes before a word that differs in every run, and holding that word didn't change the paint. A hardware write
+  breakpoint on it (DR0, every thread; the host instruction mapped to its recompiled function through PPCFuncMappings) found the writer: `sub_824618C0`, a 24-byte list node
+  allocator (its pool at 0x82A39580, the node's +0 to +8 from r4..r6, +12/+16 the pair at r7), called from 0x82460D6C with resource keys. The word was just a node that heap reuse
+  put there; the keys are the same set in every run (70 of 81, the rest still loading), in another order. So nothing in the vehicle's memory has shown the paint yet.
+- Next, if picked up: the paint and vinyl end up in the car's skin texture; find where that texture is put together (the render target the composite draws go to when a car is
+  made) and work back from those draws' inputs to the choice.
