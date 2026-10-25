@@ -80,6 +80,7 @@ namespace
     std::atomic<Scales> s_scales{ Scales{ 1.0f, 1.0f } };
     std::atomic<bool> s_hooksSeen{ false };
     std::atomic<bool> s_tallHooksSeen{ false };
+    std::atomic<float> s_playerProjX{ 0.0f }, s_playerProjY{ 0.0f };  // view 1's P[0][0], |P[1][1]|
     std::atomic<float> s_frontEndX{ 0.0f };
     std::atomic<float> s_frontEndY{ 0.0f };
 
@@ -127,7 +128,8 @@ namespace
             return 1.0f;
         constexpr double kRadians = 3.14159265358979323846 / 180.0;
         const double half = std::atan(1.0 / inv);
-        const double wider = std::clamp(half + 0.5 * degrees * kRadians, 5.0 * kRadians, 75.0 * kRadians);
+        // Within 10..150 degrees, but never against the setting (a camera already narrower or wider than that).
+        const double wider = std::clamp(half + 0.5 * degrees * kRadians, std::min(half, 5.0 * kRadians), std::max(half, 75.0 * kRadians));
         return float(std::tan(half) / std::tan(wider));
     }
 
@@ -200,6 +202,13 @@ namespace game
         return s_tallHooksSeen.load(std::memory_order_relaxed);
     }
 
+    bool PlayerProjection(float& x, float& y)
+    {
+        x = s_playerProjX.load(std::memory_order_relaxed);
+        y = s_playerProjY.load(std::memory_order_relaxed);
+        return x > 0.0f && y > 0.0f;
+    }
+
     float FrontEndScaleX()
     {
         return s_frontEndX.load(std::memory_order_relaxed);
@@ -220,6 +229,21 @@ void UltrawideProjection(PPCRegister& r28, PPCRegister& f12, PPCRegister& f10)
     }
     const Scales scale = s_scales.load(std::memory_order_relaxed);
     const bool fov = settings::GetInt(settings::Id::FieldOfView) != 0;
+    const bool player = ByteSwap(*static_cast<const uint32_t*>(g_memory.Translate(r28.u32 + 4))) == 1;
+    // The player's view as it is left here (the multiplayer overlay projects with it).
+    struct Record
+    {
+        bool on;
+        PPCRegister &x, &y;
+        ~Record()
+        {
+            if (on)
+            {
+                s_playerProjX.store(float(std::abs(x.f64)), std::memory_order_relaxed);
+                s_playerProjY.store(float(std::abs(y.f64)), std::memory_order_relaxed);
+            }
+        }
+    } record{ player, f12, f10 };
     if (scale.x == 1.0f && scale.y == 1.0f && !fov)
         return;
     if (!WidenedView(r28.u32))

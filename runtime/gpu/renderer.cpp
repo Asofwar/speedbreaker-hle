@@ -9272,6 +9272,14 @@ void main()
         // AntiAliasingGlsl) into the post scratch and copied back.
         RenderTarget* s_aaSource = nullptr;
         std::atomic<uint64_t> s_sceneAaFrame{ 0 };  // s_frame + 1 at the last one
+        std::atomic<uint64_t> s_swapFrame{ 0 };     // s_frame for other threads (SceneAntiAliased)
+        // Its output, of its own: the post scratch is resized by the motion blur
+        // and the occlusion to their region, which would free it under this
+        // pass's recorded work. Made at the first size and freed only by
+        // ApplyRenderScale after its Flush; a target of another size meanwhile
+        // isn't anti-aliased here (the presenter's pass does it).
+        Image s_sceneAaImage;
+        uint32_t s_sceneAaW = 0, s_sceneAaH = 0;
         VkPipeline s_sceneAaPipeline = VK_NULL_HANDLE;
         VkPipelineLayout s_sceneAaLayout = VK_NULL_HANDLE;
         VkDescriptorSetLayout s_sceneAaSetLayout = VK_NULL_HANDLE;
@@ -9286,8 +9294,22 @@ void main()
                 return;
             }
             const uint32_t w = std::min(rt->width, rt->scale.x.Size(1280)), h = std::min(rt->height, rt->scale.y.Size(720));
-            if (!EnsurePostFx(w, h, false))
+            if (!s_post.sampler && !EnsurePostFx(w, h, false))  // (its sampler)
                 return;
+            if (s_sceneAaW != w || s_sceneAaH != h)
+            {
+                if (s_sceneAaW)
+                {
+                    LogOnce(0x9072, "Keep HUD Sharp: a %ux%u target after %ux%u ones: left to the presenter until the resolution changes", w, h, s_sceneAaW,
+                        s_sceneAaH);
+                    return;
+                }
+                s_sceneAaImage = CreateImage(VK_IMAGE_TYPE_2D, VK_FORMAT_R8G8B8A8_UNORM, { w, h, 1 }, 1,
+                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT);
+                ToGeneral(s_sceneAaImage.image, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+                s_sceneAaW = w;
+                s_sceneAaH = h;
+            }
             if (!s_sceneAaPipeline)
             {
                 const VkDescriptorSetLayoutBinding b[2] = {
@@ -9303,7 +9325,7 @@ void main()
             FlushPendingClears(rt);
             FullBarrier();
             VkDescriptorImageInfo in{ s_post.sampler, rt->image.view, VK_IMAGE_LAYOUT_GENERAL };
-            VkDescriptorImageInfo out{ VK_NULL_HANDLE, s_post.scratch.view, VK_IMAGE_LAYOUT_GENERAL };
+            VkDescriptorImageInfo out{ VK_NULL_HANDLE, s_sceneAaImage.view, VK_IMAGE_LAYOUT_GENERAL };
             VkWriteDescriptorSet writes[2] = {
                 { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &in, nullptr, nullptr },
                 { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &out, nullptr, nullptr },
@@ -9316,7 +9338,8 @@ void main()
                 int32_t band[4];
                 float uvScale[2];
                 uint32_t copyOnly, pad;
-            } pc = { int32_t(w), int32_t(h), 0.5f, 0u, { 0, 0, 0, 0 }, { float(w) / float(rt->width), float(h) / float(rt->height) }, 0u, 0u };
+            } pc = { int32_t(w), int32_t(h), 0.5f, 1u, { 0, int32_t(w), 0, int32_t(h) }, { float(w) / float(rt->width), float(h) / float(rt->height) }, 0u, 0u };
+            // (The band: the scene's w x h, so no fetch reaches the target's rows below it.)
             static_assert(sizeof(pc) == 48);
             s_stateEpoch++;
             vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_sceneAaPipeline);
@@ -9327,7 +9350,7 @@ void main()
             VkImageCopy copy{};
             copy.srcSubresource = copy.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
             copy.extent = { w, h, 1 };
-            vkCmdCopyImage(s_cmd, s_post.scratch.image, VK_IMAGE_LAYOUT_GENERAL, rt->image.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+            vkCmdCopyImage(s_cmd, s_sceneAaImage.image, VK_IMAGE_LAYOUT_GENERAL, rt->image.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
             FullBarrier();
             s_sceneAaFrame.store(s_frame + 1, std::memory_order_relaxed);
         }
@@ -12121,6 +12144,11 @@ void main()
             const gpu::RenderScale old = s_renderScale;
             Flush();
             ReleasePostFx();
+            if (s_sceneAaW)
+            {
+                DestroyImage(s_sceneAaImage);
+                s_sceneAaW = s_sceneAaH = 0;
+            }
             s_renderScale = scale;
             PrewarmResolvePipelines(scale);
             size_t targets = 0;
@@ -15654,7 +15682,7 @@ void main()
     bool SceneAntiAliased()
     {
         const uint64_t at = s_sceneAaFrame.load(std::memory_order_relaxed);
-        return at && s_frame <= at + 1;  // (this frame's, or the one before: the presenter is a frame behind)
+        return at && s_swapFrame.load(std::memory_order_relaxed) <= at + 1;  // (this frame's, or the one before: the presenter is a frame behind)
     }
 
     void ReadBackScenePhoto(FrontPixels done)
@@ -15861,6 +15889,7 @@ void main()
         s_frame = frame;
         if (s_vk)
             TrimTextureCache();
+        s_swapFrame.store(frame, std::memory_order_relaxed);
         // NFSMW_RESOLVE_STATS's window.
         s_hleCounting = s_hleWindow.second > s_hleWindow.first && frame >= s_hleWindow.first && frame < s_hleWindow.second;
         s_hle.frames += s_hleCounting;
