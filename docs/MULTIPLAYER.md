@@ -551,5 +551,8 @@ So the choice is made elsewhere: by a generator of the game's own with another f
   both runs. The textures that differ belong to the frame's own targets (reflections, the environment cube, the grade), which hide anything else.
 - Every draw's vertex buffers hashed whole (green against purple): the car shaders' buffers in the scene are the same; the only ones that differ are a shadow map's (another
   car in its frustum). So the colour isn't in the vertex data either.
-- Next, if picked up: a per-pixel attribution (which draw last wrote the rival car's pixels, by a readback after each draw of one frame), then that draw's every input compared
-  between runs. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
+- The cars' own textures (sampled by the car shaders 48553c3b, 781d5cda, 793a572b, ca767628; loaded at other addresses each run, so matched by size and order, first 64 KB
+  hashed; silver with a red vinyl against pink): of 20 per run, 9 have the same contents in both runs, 11 differ, among them a 1024x1024 one of a pair whose other half is the
+  same, and the 32x32, 128x64, 256x128 and 256x256 ones of both cars. The 1024x1024 one is the best candidate for the composited skin (paint and vinyl).
+- Next, if picked up: dump that texture as a picture to confirm it (the renderer has no texture dump yet: untile and decode it as the texture cache does), then a hardware write
+  breakpoint on it (debug::DrWatch, rebuilt from this history) to find what composites it, and from which inputs; or a per-pixel attribution of the rival car's pixels. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
