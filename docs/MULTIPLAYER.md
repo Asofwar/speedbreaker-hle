@@ -479,3 +479,15 @@ world still loads, game/world_mode.cpp makes a pool of six vehicles (the game's 
 already on the server, then BMW M3 GTR, Lancer Evo VIII, RX-8, Supra, Mustang GT, Cobalt SS. A pool vehicle that nobody drives is held far below the world (its body is written every step in the same
 hook that drives a stand-in); a player or an AI racer that appears later takes a free one of its car, or any free one (a different model) if its car is not in the pool; a player who leaves gives it back.
 Checked: a bot joining 25 s after the world loaded is a solid car; a bot that was on the server first gets its exact car (a green Supra with its own livery).
+
+### Two whole game clients, and Windows with Linux (2026-10-25)
+Tested with real game clients, not bots (protocol 9):
+- **Two Windows clients on one PC** (each its own profile and `multiplayer.txt`, open world mode, `mp_server.exe`): each makes a vehicle for the other from the pool and draws it where the
+  other's own log says it is (IS300 and RX-8, names over the cars). Found and fixed on the way: every dev start puts the car on the same spot, so the two started inside each other and the
+  collision threw one off; now a car still on that spot 3 s in moves along the road by its rank among the players' ids (`[mp] spawn spread`).
+- **Windows and Linux**: the Linux `mp_server` in a container of its own (`archlinux`, the port published on 127.0.0.1), the Windows client on the host, and a Linux client in `sb-build` on
+  a shared Docker network, rendering with lavapipe on an Xvfb display (25 fps in the world; with `NFSMW_HEADLESS=1` the game reads no input, so a headless client can't be driven). The Linux
+  car's own path (982,2148 -> 992,2165 -> 993,2164, tracker axes) is what the Windows client drew (992,2165 / 992,2164), and the Linux client drew the Windows car's +10 m spawn move.
+- In the dev start the car faces a house across the road: a pad that only accelerates drives into it and spins the wheels. Outside open world mode, the dev start counts as a race, and
+  the start barrier holds it until the players arrive (B: start without them).
+Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN (latency, packet loss), and the race mode (Quick Race on both) rather than the open world.
