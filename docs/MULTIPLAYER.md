@@ -546,4 +546,7 @@ So the choice is made elsewhere: by a generator of the game's own with another f
 - Every draw of the 240 frames after the RX-8 pool car is made (about 76,000 draws a run; turquoise with a red vinyl, gold, dark green in three runs), with the pixel shaders'
   c0..c31: no constant of the same shaders reads as the car's colour in each run. So the colour reaches the GPU another way (vertex colours, vertex shader constants, or a
   palette texture the skin samples).
-- Next, if picked up: the same draws with the vertex shader constants and each draw's textures' contents hashed, to see which input follows the colour.
+- One normal frame with every draw's vertex shader constants (c0..c255) and pixel shader constants (c0..c63), purple against lime green: the only colour-like rows are world
+  matrix rows (their fourth component is a position). Every texture of the car shaders (ps_7f7cf48a), its first 4 KB hashed, brown with a blue vinyl against silver: the same in
+  both runs. The textures that differ belong to the frame's own targets (reflections, the environment cube, the grade), which hide anything else.
+- Next, if picked up: the textures of each draw that covers the rival car's pixels on screen, hashed in full and with the frame's render targets left out.
