@@ -1,0 +1,6 @@
+# A short test race next to the dev-start world's spawn point (the road runs along +z): useful with a stand-in racer (build/main/runtime/mp_racebot).
+race spawnloop laps=2 radius=25
+point -2150 153 984
+point -2145 152 1100
+point -2125 151 1203
+point -2145 152 1100
