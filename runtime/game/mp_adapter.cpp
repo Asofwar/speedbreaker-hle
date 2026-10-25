@@ -694,6 +694,13 @@ namespace
         }
         if (a.net->Connected())
         {
+            // NFSMW_TEST_CHAT=<text>: a test: that chat line once, as the settings page sends one.
+            static const char* testChat = std::getenv("NFSMW_TEST_CHAT");
+            if (testChat && *testChat)
+            {
+                game::MpSendChat(testChat);
+                testChat = nullptr;
+            }
             std::vector<std::string> out;
             {
                 std::lock_guard<std::mutex> g(g_chatMutex);
