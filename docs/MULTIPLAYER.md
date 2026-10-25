@@ -490,4 +490,15 @@ Tested with real game clients, not bots (protocol 9):
   car's own path (982,2148 -> 992,2165 -> 993,2164, tracker axes) is what the Windows client drew (992,2165 / 992,2164), and the Linux client drew the Windows car's +10 m spawn move.
 - In the dev start the car faces a house across the road: a pad that only accelerates drives into it and spins the wheels. Outside open world mode, the dev start counts as a race, and
   the start barrier holds it until the players arrive (B: start without them).
-Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN (latency, packet loss), and the race mode (Quick Race on both) rather than the open world.
+- **Delay and loss** (the server in a container with `tc qdisc ... netem` on its interface, two Windows clients, one driving; `NFSMW_MP_TRACE_REMOTE=1` logs each remote car's pose every
+  50 ms, and the speed between two samples is compared with the car's own speed):
+
+  | server's link | rtt | |speed between samples - own speed|, median / p95 | worst | jumps (over 1.5x own + 5 m/s) |
+  |---|---|---|---|---|
+  | none | ~10 ms | 0.90 / 3.68 m/s | +4.2 m/s | 0 |
+  | 80 +- 20 ms, 2% loss | 85 ms | 0.94 / 5.03 m/s | +8.5 m/s | 0 |
+  | 150 +- 50 ms, 5% loss | 162 ms | 1.74 / 7.49 m/s | +14.6 m/s (0.7 m in 50 ms) | 3 |
+
+  The car stays where it should be with a VPN-like link; with jitter past the client's fixed 100 ms interpolation delay it is extrapolated now and then and steps by under a metre
+  (an interpolation delay that follows the measured jitter would take that out). Speeds in these runs were low (up to 14 m/s).
+Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN, and the race mode (Quick Race on both) rather than the open world.

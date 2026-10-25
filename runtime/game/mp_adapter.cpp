@@ -385,6 +385,18 @@ namespace
             mp::CarState c;
             if (!pb || !a.net->RemoteCar(id, a.net->NowMs(), c))
                 return;
+            // NFSMW_MP_TRACE_REMOTE=1: the pose each remote car is given, at most every 50 ms (tests: how smooth it stays with delay and loss).
+            static const bool traceRemote = std::getenv("NFSMW_MP_TRACE_REMOTE") != nullptr;
+            if (traceRemote)
+            {
+                static std::map<uint8_t, double> lastTrace;
+                if (a.Now() - lastTrace[id] >= 0.05)
+                {
+                    lastTrace[id] = a.Now();
+                    fprintf(stderr, "[mptrace] %.3f %u %.2f %.2f %.2f %.2f\n", a.Now(), unsigned(id), double(c.pos[0]), double(c.pos[1]), double(c.pos[2]),
+                        double(std::sqrt(c.vel[0] * c.vel[0] + c.vel[1] * c.vel[1] + c.vel[2] * c.vel[2])));
+                }
+            }
             Phys out;
             for (int i = 0; i < 4; ++i) out.q[i] = c.rot[i];
             for (int i = 0; i < 3; ++i) { out.pos[i] = c.pos[i]; out.vel[i] = c.vel[i]; out.ang[i] = c.angVel[i]; }
