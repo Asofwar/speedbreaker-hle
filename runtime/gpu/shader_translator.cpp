@@ -12,6 +12,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <format>
 #include <map>
 #include <set>
@@ -249,6 +250,46 @@ float xmul(float a, float b)
                 body.append(size_t(indent) * 4, ' ');
                 body += s;
                 body += '\n';
+                if (s.find("setp") != std::string::npos)
+                    p0Written = true;
+            }
+
+            // Predicated instructions: consecutive ones on the same predicate condition share one `if (p0 == ...)`, as long as
+            // none of them rewrites p0 (a branch per instruction is what the GPU compiler would otherwise emit).
+            int predOpen = -1;  // the condition of the open group (0/1), -1 for none
+            bool p0Written = false;
+
+            void ClosePred()
+            {
+                if (predOpen >= 0)
+                {
+                    indent--;
+                    Line("}");
+                    predOpen = -1;
+                }
+            }
+
+            void PredBegin(bool predicated, bool condition)
+            {
+                p0Written = false;
+                if (!predicated)
+                {
+                    ClosePred();
+                    return;
+                }
+                if (predOpen == int(condition))
+                    return;
+                ClosePred();
+                Line(std::format("if (p0 == {}) {{", condition ? "true" : "false"));
+                indent++;
+                predOpen = int(condition);
+            }
+
+            void PredEnd()
+            {
+                static const bool noMerge = std::getenv("NFSMW_NO_PRED_MERGE") != nullptr;  // for comparing: one branch per instruction
+                if (p0Written || noMerge)
+                    ClosePred();
             }
 
             void NoteRegister(uint32_t r)
@@ -555,11 +596,7 @@ float xmul(float a, float b)
                 if (!vecNeeded && !scaNeeded && !zeroMask && !oneMask)
                     return;
 
-                if (op.is_predicated())
-                {
-                    Line(std::format("if (p0 == {}) {{", op.predicate_condition() ? "true" : "false"));
-                    indent++;
-                }
+                PredBegin(op.is_predicated(), op.predicate_condition());
                 // Both operations read the registers as they were before the
                 // instruction: compute into temporaries, then store.
                 Line("{");
@@ -625,11 +662,7 @@ float xmul(float a, float b)
                 }
                 indent--;
                 Line("}");
-                if (op.is_predicated())
-                {
-                    indent--;
-                    Line("}");
-                }
+                PredEnd();
             }
 
             // Destination swizzle for fetches: 3 bits per component.
@@ -687,11 +720,7 @@ float xmul(float a, float b)
                     out.vertexExtent[slot] = uint8_t(std::max<int32_t>(out.vertexExtent[slot], op.offset() + 4));
                 }
 
-                if (op.is_predicated())
-                {
-                    Line(std::format("if (p0 == {}) {{", op.predicate_condition() ? "true" : "false"));
-                    indent++;
-                }
+                PredBegin(op.is_predicated(), op.predicate_condition());
                 Line("{");
                 indent++;
                 std::string index = Reg(full.src(), full.is_src_relative()) + "." + kComp[full.src_swizzle() & 3];
@@ -805,17 +834,14 @@ float xmul(float a, float b)
                 StoreFetchResult(op.dest(), op.is_dest_relative(), op.dest_swizzle(), "vdata");
                 indent--;
                 Line("}");
-                if (op.is_predicated())
-                {
-                    indent--;
-                    Line("}");
-                }
+                PredEnd();
             }
 
             void TextureFetch(const TextureFetchInstruction& op)
             {
                 if (op.opcode() == FetchOpcode::kSetTextureLod)
                 {
+                    PredBegin(false, false);
                     Line("texLod = " + Reg(op.src(), op.is_src_relative()) + "." + kComp[op.src_swizzle() & 3] + ";");
                     return;
                 }
@@ -825,11 +851,7 @@ float xmul(float a, float b)
                     return;
                 }
                 uint32_t slot = op.fetch_constant_index();
-                if (op.is_predicated())
-                {
-                    Line(std::format("if (p0 == {}) {{", op.predicate_condition() ? "true" : "false"));
-                    indent++;
-                }
+                PredBegin(op.is_predicated(), op.predicate_condition());
                 Line("{");
                 indent++;
                 std::string src = Reg(op.src(), op.is_src_relative());
@@ -928,11 +950,7 @@ float xmul(float a, float b)
                 }
                 indent--;
                 Line("}");
-                if (op.is_predicated())
-                {
-                    indent--;
-                    Line("}");
-                }
+                PredEnd();
             }
 
             template<typename T>
@@ -945,6 +963,7 @@ float xmul(float a, float b)
                     if (size_t(exec.address() + k) * 3 + 3 > dwords)
                     {
                         Error("instruction address outside the shader");
+                        ClosePred();
                         return;
                     }
                     if (seq & 1)
@@ -960,6 +979,7 @@ float xmul(float a, float b)
                         Alu(*reinterpret_cast<const AluInstruction*>(op));
                     }
                 }
+                ClosePred();
             }
 
             void Translate()
@@ -1001,6 +1021,29 @@ float xmul(float a, float b)
                     }
                 }
 
+                // Programs whose only jumps go forward (no loops, calls, returns) are emitted as structured code: each block
+                // runs only if no taken jump skips it. The GPU compiler can optimise that; it cannot optimise the state machine.
+                bool forward = !flat;
+                for (size_t i = 0; i < cf.size() && forward; i++)
+                {
+                    switch (cf[i].opcode())
+                    {
+                    case ControlFlowOpcode::kLoopStart:
+                    case ControlFlowOpcode::kLoopEnd:
+                    case ControlFlowOpcode::kCondCall:
+                    case ControlFlowOpcode::kReturn:
+                        forward = false;
+                        break;
+                    case ControlFlowOpcode::kCondJmp:
+                        if (cf[i].cond_jmp.address() <= i || cf[i].cond_jmp.address() > cf.size())
+                            forward = false;
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                static const bool noForward = std::getenv("NFSMW_NO_FORWARD_CF") != nullptr;  // for comparing against the state machine
+
                 if (flat)
                 {
                     for (auto& c : cf)
@@ -1008,6 +1051,10 @@ float xmul(float a, float b)
                         if (!EmitFlatCf(c))
                             break;
                     }
+                }
+                else if (forward && !noForward)
+                {
+                    EmitForward(cf);
                 }
                 else
                 {
@@ -1060,6 +1107,77 @@ float xmul(float a, float b)
                 default:
                     Error(std::format("control flow opcode {} in a flat program", uint32_t(c.opcode())));
                     return false;
+                }
+            }
+
+            // Forward-only jumps: `jt` is the first block that may run; a taken jump raises it, the end of the program
+            // sets it past every block.
+            void EmitForward(const std::vector<ControlFlowInstruction>& cf)
+            {
+                Line("int jt = 0;");
+                for (size_t i = 0; i < cf.size(); i++)
+                {
+                    const auto& c = cf[i];
+                    bool empty = c.opcode() == ControlFlowOpcode::kNop || c.opcode() == ControlFlowOpcode::kAlloc ||
+                        c.opcode() == ControlFlowOpcode::kMarkVsFetchDone;
+                    if (empty)
+                        continue;
+                    if (i > 0)
+                    {
+                        Line(std::format("if (jt <= {}) {{", i));
+                        indent++;
+                    }
+                    bool end = false;
+                    switch (c.opcode())
+                    {
+                    case ControlFlowOpcode::kExec:
+                    case ControlFlowOpcode::kExecEnd:
+                        Exec(c.exec);
+                        end = c.opcode() == ControlFlowOpcode::kExecEnd;
+                        break;
+                    case ControlFlowOpcode::kCondExec:
+                    case ControlFlowOpcode::kCondExecEnd:
+                    case ControlFlowOpcode::kCondExecPredClean:
+                    case ControlFlowOpcode::kCondExecPredCleanEnd:
+                        Line(std::format("if (boolConst({}u) == {}) {{", c.cond_exec.bool_address(),
+                            c.cond_exec.condition() ? "true" : "false"));
+                        indent++;
+                        Exec(c.cond_exec);
+                        indent--;
+                        Line("}");
+                        end = c.opcode() == ControlFlowOpcode::kCondExecEnd || c.opcode() == ControlFlowOpcode::kCondExecPredCleanEnd;
+                        break;
+                    case ControlFlowOpcode::kCondExecPred:
+                    case ControlFlowOpcode::kCondExecPredEnd:
+                        Line(std::format("if (p0 == {}) {{", c.cond_exec_pred.condition() ? "true" : "false"));
+                        indent++;
+                        Exec(c.cond_exec_pred);
+                        indent--;
+                        Line("}");
+                        end = c.opcode() == ControlFlowOpcode::kCondExecPredEnd;
+                        break;
+                    case ControlFlowOpcode::kCondJmp:
+                    {
+                        std::string cond = c.cond_jmp.is_unconditional() ? ""
+                            : c.cond_jmp.is_predicated()
+                                ? std::format("p0 == {}", c.cond_jmp.condition() ? "true" : "false")
+                                : std::format("boolConst({}u) == {}", c.cond_jmp.bool_address(), c.cond_jmp.condition() ? "true" : "false");
+                        if (cond.empty())
+                            Line(std::format("jt = {};", c.cond_jmp.address()));
+                        else
+                            Line(std::format("if ({}) jt = {};", cond, c.cond_jmp.address()));
+                        break;
+                    }
+                    default:
+                        Error(std::format("control flow opcode {} not implemented", uint32_t(c.opcode())));
+                    }
+                    if (end)
+                        Line("jt = 0x7FFFFFFF;");
+                    if (i > 0)
+                    {
+                        indent--;
+                        Line("}");
+                    }
                 }
             }
 
