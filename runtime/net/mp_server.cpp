@@ -40,6 +40,8 @@ namespace mp
         struct Held { float clock = 0; uint8_t need = 0; };
         std::map<uint8_t, Held> held;
         RaceManager race;                 // the open world's races: rules in net/mp_race.cpp
+        std::string recordsPath;          // <races file>.records
+        std::map<std::string, RaceRecord> records;
         uint32_t raceVersionSent = 0, raceSentAt = 0;
         std::map<ENetPeer*, uint32_t> pending;   // connected, no Hello yet (when it connected)
         uint32_t nextTick = 0, nextSweep = 0;
@@ -72,6 +74,49 @@ namespace mp
                 for (const Vec3& v : d.points) { w.f32(v.x); w.f32(v.y); w.f32(v.z); }
             }
             Send(p, kChanEvent, w, true);
+        }
+        Writer RecordsMessage() const
+        {
+            Writer w(Msg::Records);
+            const auto& rs = race.Races();
+            w.u8(uint8_t(rs.size()));
+            for (const RaceDef& d : rs)
+            {
+                const auto it = records.find(d.name);
+                w.u32(it == records.end() ? 0 : it->second.ms);
+                w.str(it == records.end() ? std::string() : it->second.name);
+            }
+            return w;
+        }
+        // Chat from the server (its console, records).
+        void SayAll(const std::string& line)
+        {
+            Writer w(Msg::Chat); w.u8(kServerId); w.text(line);
+            Broadcast(kChanEvent, w, true);
+            fprintf(stderr, "[mp-server] chat server: %s\n", line.c_str());
+        }
+        // The race's finishes: a new best time is kept, saved and announced.
+        void TakeFinishes()
+        {
+            for (const FinishEvent& f : race.TakeFinishes())
+            {
+                if (f.race < 0 || size_t(f.race) >= race.Races().size())
+                    continue;
+                const std::string& raceName = race.Races()[size_t(f.race)].name;
+                const auto pit = players.find(f.id);
+                const std::string who = pit == players.end() ? "player " + std::to_string(f.id) : pit->second.name;
+                fprintf(stderr, "[mp-server] %s finished %s in %s\n", who.c_str(), raceName.c_str(), FormatRaceTime(f.ms).c_str());
+                RaceRecord& rec = records[raceName];
+                if (!Beats(rec, f.ms))
+                    continue;
+                const RaceRecord was = rec;
+                rec = { f.ms, who };
+                if (!recordsPath.empty() && !SaveRecords(recordsPath, records))
+                    fprintf(stderr, "[mp-server] cannot write %s\n", recordsPath.c_str());
+                SayAll("New record on " + raceName + ": " + who + " " + FormatRaceTime(f.ms) +
+                    (was.ms ? " (was " + FormatRaceTime(was.ms) + " by " + was.name + ")" : ""));
+                Broadcast(kChanEvent, RecordsMessage(), true);
+            }
         }
         void BroadcastRaceState(uint32_t now)
         {
@@ -165,7 +210,10 @@ namespace mp
                 Broadcast(kChanEvent, j, true);
                 players[id] = np;
                 if (!race.Races().empty())
+                {
                     SendRaceList(peer);
+                    Send(peer, kChanEvent, RecordsMessage(), true);
+                }
                 fprintf(stderr, "[mp-server] %s joined as %u (%zu players)\n", name.c_str(), id, players.size());
             }
             else if (!pl)
@@ -237,6 +285,7 @@ namespace mp
         {
             const uint32_t now = NowMs();
             race.Tick(now);
+            TakeFinishes();
             if (!race.Races().empty() && (race.Version() != raceVersionSent || now - raceSentAt >= 200))
                 BroadcastRaceState(now);
             for (auto& [id, pl] : players)
@@ -325,7 +374,15 @@ namespace mp
         std::vector<RaceDef> rs;
         if (!mp::LoadRaces(path, rs)) return false;
         m->race.SetRaces(std::move(rs));
-        fprintf(stderr, "[mp-server] %zu race(s) loaded from %s\n", m->race.Races().size(), path.c_str());
+        m->recordsPath = path + ".records";
+        m->records = LoadRecords(m->recordsPath);
+        fprintf(stderr, "[mp-server] %zu race(s) loaded from %s, %zu record(s) from %s\n", m->race.Races().size(), path.c_str(), m->records.size(),
+            m->recordsPath.c_str());
+        for (const auto& [id, pl] : m->players)
+        {
+            m->SendRaceList(pl.peer);
+            m->Send(pl.peer, kChanEvent, m->RecordsMessage(), true);
+        }
         return true;
     }
     int Server::RaceCount() const { return int(m->race.Races().size()); }
@@ -339,9 +396,33 @@ namespace mp
                 line += (ch >= 32 && ch < 127) ? ch : '?';
         if (line.empty())
             return;
-        Writer w(Msg::Chat); w.u8(kServerId); w.text(line);
-        m->Broadcast(kChanEvent, w, true);
-        fprintf(stderr, "[mp-server] chat server: %s\n", line.c_str());
+        m->SayAll(line);
+    }
+
+    std::string Server::Races() const
+    {
+        std::string out;
+        for (const RaceDef& d : m->race.Races())
+        {
+            const auto it = m->records.find(d.name);
+            char b[200];
+            snprintf(b, sizeof b, "  %s: %d lap(s), %zu points, start %.0f %.0f %.0f, record %s\n", d.name.c_str(), d.laps, d.points.size(), double(d.points[0].x),
+                double(d.points[0].y), double(d.points[0].z), it == m->records.end() || !it->second.ms ? "none" : (FormatRaceTime(it->second.ms) + " by " + it->second.name).c_str());
+            out += b;
+        }
+        return out.empty() ? std::string("  (no races: mp_server <port> <races file>)\n") : out;
+    }
+
+    bool Server::Kick(const std::string& name)
+    {
+        for (auto& [id, pl] : m->players)
+            if (pl.name == name)
+            {
+                m->SayAll(name + " was removed from the server");
+                enet_peer_disconnect_later(pl.peer, 0);
+                return true;
+            }
+        return false;
     }
 
     std::string Server::Players() const

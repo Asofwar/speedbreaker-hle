@@ -11,7 +11,7 @@
 namespace mp
 {
     constexpr uint16_t kDefaultPort = 27960;
-    constexpr uint32_t kProtocolVersion = 7;
+    constexpr uint32_t kProtocolVersion = 8;
     constexpr size_t kMaxChat = 160;        // a chat line's characters (Writer::text)
     constexpr uint8_t kServerId = 0xFF;     // Chat's sender id for the server's own lines (its console)
     constexpr int kMaxPlayers = 16;
@@ -36,6 +36,7 @@ namespace mp
         RaceList,       // S->C reliable: the races the server runs: count, then per race name, laps, radius, points (the first is the start marker)
         RaceState,      // S->C reliable, at most 5 a second: the race in progress: race index (255 none), phase, time (ms), racers (id, lap, next point, place, finish time)
         Go,             // S->C reliable: the server released the start: the slowest world clock (f32), and in how many ms (from receipt, round trip allowed for) that clock's game starts (u32)
+        Records,        // S->C reliable, after RaceList and on every new record: count (the races'), then per race its best time (u32 ms, 0 none) and who drove it (str)
     };
 
     constexpr uint16_t kFlagReady = 0x10;   // CarState::flags: this game is held at the start barrier and ready to go

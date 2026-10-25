@@ -22,6 +22,10 @@ namespace mp
         void Say(const std::string& text);
         // One line per player: id, name, the car it chose, ready or not.
         std::string Players() const;
+        // One line per race: laps, points, start, record.
+        std::string Races() const;
+        // Disconnect the player of that name (after a line to everyone). False: no such player.
+        bool Kick(const std::string& name);
         uint16_t Port() const;
     private:
         struct Impl;

@@ -109,12 +109,13 @@ namespace mp
         }
     }
 
-    void RaceManager::Finish(uint8_t, Racer& r, uint32_t raceMs)
+    void RaceManager::Finish(uint8_t id, Racer& r, uint32_t raceMs)
     {
         r.finished = true;
         r.finishMs = raceMs ? raceMs : 1;
         r.place = ++finishedCount_;
         ++version_;
+        finishes_.push_back({ id, race_, r.finishMs });
     }
 
     void RaceManager::Remove(uint8_t id)
@@ -255,5 +256,50 @@ namespace mp
         fclose(f);
         out.erase(std::remove_if(out.begin(), out.end(), [](const RaceDef& d) { return d.points.size() < 2; }), out.end());
         return true;
+    }
+
+    std::map<std::string, RaceRecord> LoadRecords(const std::string& path)
+    {
+        std::map<std::string, RaceRecord> out;
+        FILE* f = fopen(path.c_str(), "r");
+        if (!f)
+            return out;
+        char line[256];
+        while (fgets(line, sizeof line, f))
+        {
+            char race[64] = {};
+            unsigned ms = 0;
+            int used = 0;
+            if (strncmp(line, "record ", 7) != 0 || sscanf(line + 7, "%63s %u %n", race, &ms, &used) < 2 || !ms)
+                continue;
+            std::string name = line + 7 + used;
+            while (!name.empty() && (name.back() == '\n' || name.back() == '\r' || name.back() == ' '))
+                name.pop_back();
+            out[race] = { ms, name.empty() ? std::string("player") : name };
+        }
+        fclose(f);
+        return out;
+    }
+
+    bool SaveRecords(const std::string& path, const std::map<std::string, RaceRecord>& records)
+    {
+        const std::string tmp = path + ".new";
+        FILE* f = fopen(tmp.c_str(), "w");
+        if (!f)
+            return false;
+        fprintf(f, "# The best time of each race (written by mp_server): record <race> <ms> <player>\n");
+        for (const auto& [race, r] : records)
+            if (r.ms)
+                fprintf(f, "record %s %u %s\n", race.c_str(), r.ms, r.name.c_str());
+        const bool ok = fclose(f) == 0;
+        std::remove(path.c_str());   // (rename doesn't replace a file on Windows)
+        return ok && std::rename(tmp.c_str(), path.c_str()) == 0;
+    }
+
+    std::string FormatRaceTime(uint32_t ms)
+    {
+        char b[32];
+        snprintf(b, sizeof b, "%u:%02u.%u", ms / 60000, (ms / 1000) % 60, (ms / 100) % 10);
+        return b;
     }
 }

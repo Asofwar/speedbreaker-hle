@@ -166,6 +166,8 @@ sb_test(picture_fit_test SOURCES ${RT}/video/picture_fit.cpp)
 # a Steam Deck's 1280x800 at 1x renders 1280x800, 16:9 pictures keep their
 # scale exactly, Auto takes the native shape within its budget.
 sb_test(native_rows_test SOURCES ${RT}/video/picture_fit.cpp)
+# The open world's race rules and records (net/mp_race.h).
+sb_test(mp_race_test SOURCES ${RT}/net/mp_race.cpp)
 # Which Vulkan device the presenter draws with, and its log line
 # (video/gpu_choice.h, header only).
 sb_test(gpu_choice_test)

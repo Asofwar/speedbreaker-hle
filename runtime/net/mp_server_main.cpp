@@ -1,5 +1,6 @@
 // mp_server [port] [races file]: the multiplayer dedicated server as a stand-alone program (no game files needed).
-// What is typed into it goes to every player as the server's chat line; /players lists the players, /help the commands.
+// What is typed into it goes to every player as the server's chat line; /players lists the players, /races the races and their records, /kick <name> removes
+// a player, /reload reads the races file again, /help the commands.
 #include "mp_server.h"
 #include <cstdio>
 #include <cstdlib>
@@ -50,8 +51,18 @@ int main(int argc, char** argv)
                 continue;
             if (line == "/players")
                 fprintf(stderr, "[mp-server] %d players:\n%s", s.PlayerCount(), s.Players().c_str());
+            else if (line == "/races")
+                fprintf(stderr, "[mp-server] %d races:\n%s", s.RaceCount(), s.Races().c_str());
+            else if (line.rfind("/kick ", 0) == 0)
+                fprintf(stderr, "[mp-server] %s\n", s.Kick(line.substr(6)) ? "removed" : "no player of that name (/players)");
+            else if (line == "/reload")
+            {
+                if (argc <= 2 || !s.LoadRaces(argv[2]))
+                    fprintf(stderr, "[mp-server] no races file to read again\n");
+            }
             else if (line == "/help")
-                fprintf(stderr, "[mp-server] a line: chat to every player as \"server\"; /players: who is on; /help: this\n");
+                fprintf(stderr, "[mp-server] a line: chat to every player as \"server\"; /players: who is on; /races: the races and records; /kick <name>; "
+                    "/reload: the races file again; /help: this\n");
             else if (line[0] == '/')
                 fprintf(stderr, "[mp-server] unknown command %s (/help)\n", line.c_str());
             else

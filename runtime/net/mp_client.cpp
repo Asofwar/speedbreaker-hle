@@ -62,6 +62,7 @@ namespace mp
         std::map<uint8_t, std::deque<Stamped>> hist;
         mutable std::mutex raceMutex;       // the overlay reads the race from the render thread
         std::vector<RaceDef> races;
+        std::vector<RaceRecord> records;
         RaceView raceView;
         uint32_t raceViewAt = 0;
 
@@ -259,6 +260,24 @@ namespace mp
                     }
                     break;
                 }
+                case Msg::Records:
+                {
+                    std::vector<RaceRecord> rs;
+                    const uint8_t n = r.u8();
+                    for (uint8_t i = 0; i < n && r.ok(); ++i)
+                    {
+                        RaceRecord rec;
+                        rec.ms = r.u32();
+                        rec.name = r.str();
+                        rs.push_back(std::move(rec));
+                    }
+                    if (r.ok())
+                    {
+                        std::lock_guard<std::mutex> g(m->raceMutex);
+                        m->records = std::move(rs);
+                    }
+                    break;
+                }
                 case Msg::Chat:
                 {
                     uint8_t id = r.u8();
@@ -280,6 +299,11 @@ namespace mp
     {
         std::lock_guard<std::mutex> g(m->raceMutex);
         return m->races;
+    }
+    std::vector<RaceRecord> Client::Records() const
+    {
+        std::lock_guard<std::mutex> g(m->raceMutex);
+        return m->records;
     }
     RaceView Client::CurrentRace() const
     {

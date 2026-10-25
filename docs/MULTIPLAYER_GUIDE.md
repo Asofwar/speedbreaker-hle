@@ -15,8 +15,8 @@ appear as the race's opponents (they take over the AI cars). Career mode is not 
 ```
 build/main/runtime/mp_server 27960
 ```
-It prints a line when a player joins or leaves, and every chat line. Leave it running. What you type into it goes to every player as a chat line from "server"; `/players` lists who
-is on (name, car, ready), `/help` the commands.
+It prints a line when a player joins or leaves, and every chat line. Leave it running. What you type into it goes to every player as a chat line from "server". Commands:
+`/players` (who is on: name, car, ready), `/races` (the open world's races and their records), `/kick <name>`, `/reload` (the races file again, for every player), `/help`.
 
 ## Join
 Open the settings (F1, or Back + Start on a pad), the **Online** page, section *Multiplayer races*:
@@ -68,6 +68,8 @@ the minimap), also during a race. Use it to agree the race: the track, the direc
 Instead of everyone starting the same race from the menus, the game starts straight in the open world and the server runs races from markers.
 - **Server**: `build/main/runtime/mp_server 27960 scripts/mp/races.example.txt` (the second argument is the races file: `race <name> laps=N radius=M`, then `point x y z` lines, the first is the start marker; the
   example is a lap of the Ironwood circuit recorded from an AI driver; `scripts/mp/races.test.txt` is a short loop at the world's spawn point for testing).
+- **Records**: the server keeps each race's best time and who drove it in `<races file>.records` (next to the races file, kept between runs). A new record is announced in the chat;
+  the panel shows the race's record at the start marker and during the race.
 - **Game**: in Settings > Online > Multiplayer races tick **Open world mode**, choose **your car**, and restart the game. It boots into the open world with your car (no menus), connects to the server and
   shows the race markers (a beam and a ring with the distance) and a panel.
 - **A race**: drive to a start marker and **stop in it** for a second and a half. The race opens for 15 s: other players join the same way. Then a 5 s countdown (3.. 2.. 1.. GO!), checkpoints in order (the next

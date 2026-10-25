@@ -444,6 +444,12 @@ namespace
             return;
         }
         const mp::RaceView v = net->CurrentRace();
+        const std::vector<mp::RaceRecord> records = net->Records();
+        auto recordOf = [&](size_t race) -> std::string {
+            if (race >= records.size() || !records[race].ms)
+                return "no record yet";
+            return "record " + mp::FormatRaceTime(records[race].ms) + " by " + records[race].name;
+        };
         const uint8_t me = net->MyId();
         auto nameOf = [&](uint8_t id) -> std::string {
             if (id == me)
@@ -468,6 +474,7 @@ namespace
             // No race: the start markers and how far the nearest is.
             float best = 1e9f;
             std::string bestName;
+            size_t bestIndex = 0;
             for (const mp::RaceDef& d : races)
             {
                 game::MpHudMarker m;
@@ -476,10 +483,10 @@ namespace
                 m.kind = 0;
                 h.markers.push_back(m);
                 const float dd = distTo(d.points[0]);
-                if (dd < best) { best = dd; bestName = d.name; }
+                if (dd < best) { best = dd; bestName = d.name; bestIndex = size_t(&d - races.data()); }
             }
-            char b[160];
-            snprintf(b, sizeof b, "Race %s: start marker %.0f m away. Stop inside it to start a race.", bestName.c_str(), double(best));
+            char b[200];
+            snprintf(b, sizeof b, "Race %s: start marker %.0f m away. Stop inside it to start a race (%s).", bestName.c_str(), double(best), recordOf(bestIndex).c_str());
             h.lines.push_back(b);
         }
         else
@@ -497,8 +504,9 @@ namespace
             case mp::RacePhase::Gathering:
             {
                 addStart();
-                char b[160];
-                snprintf(b, sizeof b, "Race %s opens in %u s: stop in the marker to join (%zu in).", d.name.c_str(), (v.timeMs + 999) / 1000, v.racers.size());
+                char b[200];
+                snprintf(b, sizeof b, "Race %s opens in %u s: stop in the marker to join (%zu in). %s.", d.name.c_str(), (v.timeMs + 999) / 1000, v.racers.size(),
+                    recordOf(size_t(v.race)).c_str());
                 h.lines.push_back(b);
                 if (!my) h.banner = "";
                 break;
@@ -512,10 +520,10 @@ namespace
             {
                 if (v.phase == mp::RacePhase::Running && v.timeMs < 1500 && my) h.banner = "GO!";
                 if (v.phase == mp::RacePhase::Finished) h.banner = my && my->finished ? "FINISHED" : "";
-                char b[160];
+                char b[200];
                 if (my && v.phase == mp::RacePhase::Running && !my->finished)
                 {
-                    snprintf(b, sizeof b, "%s  lap %d/%d  place %d/%zu  %s", d.name.c_str(), std::min<int>(my->lap + 1, d.laps), d.laps, my->place, v.racers.size(), RaceClock(v.timeMs).c_str());
+                    snprintf(b, sizeof b, "%s  lap %d/%d  place %d/%zu  %s  (%s)", d.name.c_str(), std::min<int>(my->lap + 1, d.laps), d.laps, my->place, v.racers.size(), RaceClock(v.timeMs).c_str(), recordOf(size_t(v.race)).c_str());
                     h.lines.push_back(b);
                     const int n = int(d.points.size());
                     for (int k = 0; k < 2; ++k)
@@ -529,7 +537,7 @@ namespace
                     }
                 }
                 else
-                    h.lines.push_back(v.phase == mp::RacePhase::Finished ? "Race over. Results:" : "A race is in progress. Racers:");
+                    h.lines.push_back(v.phase == mp::RacePhase::Finished ? "Race over (" + recordOf(size_t(v.race)) + "). Results:" : "A race is in progress. Racers:");
                 for (const mp::RacerView& r : v.racers)
                 {
                     if (r.finished)

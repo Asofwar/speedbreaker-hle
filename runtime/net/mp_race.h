@@ -43,6 +43,28 @@ namespace mp
     // A text file of races: "race <name> laps=2 radius=25" starts one, then one "point x y z" line each (the first is the start marker); '#' starts a comment.
     bool LoadRaces(const std::string& path, std::vector<RaceDef>& out);
 
+    // A racer crossed the finish line: who, in which race, the race time.
+    struct FinishEvent
+    {
+        uint8_t id = 0;
+        int race = -1;
+        uint32_t ms = 0;
+    };
+
+    // The best time of a race (ms 0: none yet) and who drove it.
+    struct RaceRecord
+    {
+        uint32_t ms = 0;
+        std::string name;
+    };
+    // The records of a races file, by race name: "record <race> <ms> <player name>" lines in <races file>.records (the server writes it on every new record).
+    std::map<std::string, RaceRecord> LoadRecords(const std::string& path);
+    bool SaveRecords(const std::string& path, const std::map<std::string, RaceRecord>& records);
+    // A finish beats the record (none yet, or faster).
+    inline bool Beats(const RaceRecord& record, uint32_t ms) { return ms && (!record.ms || ms < record.ms); }
+    // "1:23.4"
+    std::string FormatRaceTime(uint32_t ms);
+
     class RaceManager
     {
     public:
@@ -63,6 +85,8 @@ namespace mp
         RacePhase Phase() const { return phase_; }
         // Bumps whenever the phase or the field changes, so the server sends the state at once then.
         uint32_t Version() const { return version_; }
+        // The finishes since the last call, in order.
+        std::vector<FinishEvent> TakeFinishes() { std::vector<FinishEvent> out; out.swap(finishes_); return out; }
 
     private:
         struct Racer
@@ -84,5 +108,6 @@ namespace mp
         int race_ = -1;
         uint32_t phaseStart_ = 0, goAt_ = 0, version_ = 1;
         int finishedCount_ = 0;
+        std::vector<FinishEvent> finishes_;
     };
 }

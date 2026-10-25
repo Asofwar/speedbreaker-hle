@@ -50,6 +50,8 @@ namespace mp
         bool RemoteCar(uint8_t id, uint32_t nowMs, CarState& out) const;
         // The open world's races (from the server) and the race in progress as the server last said, with its time carried forward to now. Any thread.
         std::vector<RaceDef> Races() const;
+        // The best time of each race, in the order of Races() (ms 0: none yet).
+        std::vector<RaceRecord> Records() const;
         RaceView CurrentRace() const;
         uint32_t NowMs() const;
         uint32_t RttMs() const;
