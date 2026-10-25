@@ -499,6 +499,18 @@ Tested with real game clients, not bots (protocol 9):
   | 80 +- 20 ms, 2% loss | 85 ms | 0.94 / 5.03 m/s | +8.5 m/s | 0 |
   | 150 +- 50 ms, 5% loss | 162 ms | 1.74 / 7.49 m/s | +14.6 m/s (0.7 m in 50 ms) | 3 |
 
-  The car stays where it should be with a VPN-like link; with jitter past the client's fixed 100 ms interpolation delay it is extrapolated now and then and steps by under a metre
-  (an interpolation delay that follows the measured jitter would take that out). Speeds in these runs were low (up to 14 m/s).
+  The car stayed where it should be with a VPN-like link; with jitter past the client's fixed 100 ms interpolation delay it was extrapolated now and then and stepped by under a metre.
+  Then the client was changed (net/mp_client.cpp, Clock): a state is placed in time by the sender's own clock (`ownerTimeMs`, mapped to ours by the smallest offset seen), not by
+  when it arrived, and the delay it is drawn behind follows the measured excess delay (mean + 3 deviations + 40 ms, 100-300 ms). The same three runs after it:
+
+  | server's link | median / p95 | worst | jumps |
+  |---|---|---|---|
+  | none | 0.10 / 0.48 m/s | +3.7 m/s | 0 |
+  | 80 +- 20 ms, 2% loss | 0.19 / 0.83 m/s | +8.4 m/s | 0 |
+  | 150 +- 50 ms, 5% loss | 0.25 / 1.73 m/s | +6.3 m/s | 0 |
+
+  Speeds in these runs were low (up to 16 m/s).
+- **The start barrier in a real race** (after the free roam fix): two race replays of `race.jlg` (a Quick Race with three AI opponents) at once, multiplayer on with 2 players to wait for. Each
+  game was held at the start once its opponents existed, the server released both together, and each gave its first opponent to the other player ("remote player 2 (TWO) drives opponent
+  0"). The replays then left their recording (a car driven by another player is not the recorded one), as expected.
 Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN, and the race mode (Quick Race on both) rather than the open world.

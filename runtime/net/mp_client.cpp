@@ -1,5 +1,6 @@
 #include "mp_client.h"
 #include <enet/enet.h>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -9,12 +10,44 @@ namespace mp
 {
     namespace
     {
-        constexpr uint32_t kInterpDelayMs = 100;    // render remote cars this far in the past: about three snapshots
+        // Remote cars are drawn this far in the past (at least: about three snapshots), more on a link whose delay varies (Clock below), at most kMaxDelayMs.
+        constexpr uint32_t kInterpDelayMs = 100;
+        constexpr uint32_t kMaxDelayMs = 300;
         constexpr uint32_t kMaxExtrapMs = 250;      // after that hold the last pose
         constexpr size_t kHistory = 16;
         constexpr uint32_t kStaleMs = 2000;         // no packet for this long: RemoteCar() reports nothing
 
+        // localMs: when the state arrived (for staleness only); the pose is placed in time by the sender's own clock (CarState::ownerTimeMs) through Clock.
         struct Stamped { uint32_t localMs; CarState s; };
+
+        // One remote player's clock against ours. offset is the smallest (arrival - sender time) seen, the least delayed packet: arrival jitter then doesn't move
+        // where a state is placed in time, only how far behind it has to be drawn so that a later state has nearly always arrived (the excess delay's mean plus
+        // three deviations, kept between kInterpDelayMs and kMaxDelayMs). The offset creeps up slowly, so a route that got slower (or clocks that drift) is followed.
+        struct Clock
+        {
+            bool have = false;
+            double offset = 0;
+            double excessAvg = 0, excessDev = 0;
+            void Arrived(uint32_t localMs, uint32_t ownerMs)
+            {
+                const double o = double(int64_t(localMs) - int64_t(ownerMs));
+                if (!have || o < offset)
+                    offset = o;
+                else
+                    offset += (o - offset) * 0.002;
+                have = true;
+                const double excess = o - offset;
+                excessAvg += (excess - excessAvg) * 0.05;
+                excessDev += (std::abs(excess - excessAvg) - excessDev) * 0.05;
+            }
+            uint32_t DelayMs() const
+            {
+                const double d = 40.0 + excessAvg + 3.0 * excessDev;
+                return uint32_t(std::clamp(d, double(kInterpDelayMs), double(kMaxDelayMs)));
+            }
+            // A state's time on our clock.
+            int64_t Local(const CarState& s) const { return int64_t(s.ownerTimeMs) + int64_t(std::llround(offset)); }
+        };
     }
 
     CarState Lerp(const CarState& a, const CarState& b, float t)
@@ -60,6 +93,7 @@ namespace mp
         std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
         std::map<uint8_t, Remote> remotes;
         std::map<uint8_t, std::deque<Stamped>> hist;
+        std::map<uint8_t, Clock> clocks;
         mutable std::mutex raceMutex;       // the overlay reads the race from the render thread
         std::vector<RaceDef> races;
         std::vector<RaceRecord> records;
@@ -108,6 +142,7 @@ namespace mp
         m->welcome = false;
         m->remotes.clear();
         m->hist.clear();
+        m->clocks.clear();
     }
 
     void Client::Service()
@@ -172,6 +207,7 @@ namespace mp
                     uint8_t id = r.u8();
                     m->remotes.erase(id);
                     m->hist.erase(id);
+                    m->clocks.erase(id);
                     break;
                 }
                 case Msg::Snapshot:
@@ -191,6 +227,7 @@ namespace mp
                             continue;   // old or duplicate
                         rm.latest = c;
                         rm.hasCar = true;
+                        m->clocks[id].Arrived(now, c.ownerTimeMs);
                         h.push_back({now, c});
                         if (h.size() > kHistory) h.pop_front();
                     }
@@ -379,27 +416,32 @@ namespace mp
         const auto& h = it->second;
         if (nowMs - h.back().localMs > kStaleMs)
             return false;   // the player stopped sending: let the game's own driver have the car back
-        uint32_t target = nowMs - kInterpDelayMs;
-        // Arrival times are jittery, so use them only to order and to pick the pair around `target`.
-        if (int32_t(target - h.front().localMs) <= 0)
+        const auto ck = m->clocks.find(id);
+        if (ck == m->clocks.end() || !ck->second.have)
+            return false;
+        const Clock& clock = ck->second;
+        // The states in the sender's time (on our clock), so a packet that came late is still drawn where it was taken.
+        const int64_t target = int64_t(nowMs) - int64_t(clock.DelayMs());
+        if (target <= clock.Local(h.front().s))
         {
             out = h.front().s;
             return true;
         }
         for (size_t i = 1; i < h.size(); ++i)
         {
-            if (int32_t(target - h[i].localMs) <= 0)
+            const int64_t tb = clock.Local(h[i].s);
+            if (target <= tb)
             {
                 const Stamped &a = h[i - 1], &b = h[i];
-                uint32_t span = b.localMs - a.localMs;
-                float t = span ? float(target - a.localMs) / float(span) : 1.f;
+                const int64_t ta = clock.Local(a.s);
+                const float t = tb > ta ? float(target - ta) / float(tb - ta) : 1.f;
                 out = Lerp(a.s, b.s, t < 0 ? 0 : t > 1 ? 1 : t);
                 return true;
             }
         }
         // Newer than anything received: dead reckon from the last state.
         const Stamped& l = h.back();
-        uint32_t dt = target - l.localMs;
+        uint32_t dt = uint32_t(target - clock.Local(l.s));
         if (dt > kMaxExtrapMs) dt = kMaxExtrapMs;
         out = l.s;
         float s = float(dt) * 0.001f;
