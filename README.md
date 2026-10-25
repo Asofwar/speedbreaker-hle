@@ -65,18 +65,25 @@ the lobby in their copy of the game, the others join on the same network, over a
 through Steam. How to set it up: [docs/online.md](docs/online.md).
 
 There is a Windows build too (`SpeedBreaker-windows-x86_64.zip` on the Releases page): unzip it
-and start `SpeedBreaker.exe`. It began as [rafidwayne's port](https://github.com/SpeedBreakerProject/speedbreaker/pull/39);
-what it needs and how it is built: [docs/windows.md](docs/windows.md).
+and start `SpeedBreaker.exe`. It began as [rafidwayne's port](https://github.com/SpeedBreakerProject/speedbreaker/pull/39)
+and now runs on upstream's own Windows platform layer (v0.1.9 Windows beta 1), cross-built with
+MinGW-w64; what it needs and how it is built: [docs/windows.md](docs/windows.md).
 
 More picture settings, all off or at the game's own values unless you change them:
 - Display: Contrast, Saturation, Color Temperature, Remove Orange Tint, Modern Look, Rich Blacks.
-- Graphics: Color Filter, Ambient Occlusion, Motion Blur, Bloom, Modern Lighting with a
-  Tonemapper (AgX or filmic), Shadow Resolution, Reflection Refresh, Internal Resolution up to 4x.
+- Graphics: Quality presets (Original, Performance, High, Ultra), Color Filter, Ambient Occlusion,
+  Motion Blur, Bloom, Glow, Modern Lighting with a Tonemapper (AgX or filmic), Shadow Resolution,
+  Shadow Map Scale (up to 4x), Shadow Filtering (soft shadows, PCSS), Reflection Refresh (with
+  Auto), Internal Resolution up to 4x.
+- Game: Take Photo (F12 in the game: the scene without its HUD, as a PNG), and cheats from
+  `cheats.txt` (NFSMW Recompiled's format), each switched on there.
 - Advanced: Skip Startup Movies.
 
 Most of the shader work behind them comes from
-[AndhikaFW's fork](https://github.com/AndhikaFW/speedbreaker). Smooth Motion (upstream's frame
-interpolation) is offered on 120, 180 and 240 Hz screens on Windows and Linux as well.
+[AndhikaFW's fork](https://github.com/AndhikaFW/speedbreaker), the soft shadows from
+[krittinen's pull request](https://github.com/SpeedBreakerProject/speedbreaker/pull/43). Smooth
+Motion (upstream's frame interpolation) is offered on 120, 180 and 240 Hz screens on Windows and
+Linux as well.
 
 The scripts used on the Deck are in [survey/hle/deck](survey/hle/deck). Everything below this
 section is the original README.
@@ -101,15 +108,21 @@ section is the original README.
 Как настроить: [docs/online.md](docs/online.md).
 
 Есть и сборка под Windows (`SpeedBreaker-windows-x86_64.zip` в релизах): распакуйте и запустите
-`SpeedBreaker.exe`. Подробности и сборка: [docs/windows.md](docs/windows.md).
+`SpeedBreaker.exe`. Теперь она построена на собственном Windows-слое основного проекта
+(v0.1.9 Windows beta 1). Подробности и сборка: [docs/windows.md](docs/windows.md).
 
 Больше настроек картинки. Пока их не трогать, всё выключено или стоит как в игре:
 - Display: контраст, насыщенность, цветовая температура, снятие оранжевого фильтра, Modern Look, глубокие тени.
-- Graphics: цветовой фильтр, Ambient Occlusion, Motion Blur, Bloom, Modern Lighting с тонмаппером
-  (AgX или filmic), разрешение теней, частота обновления отражений, внутреннее разрешение до 4x.
+- Graphics: пресеты качества (Original, Performance, High, Ultra), цветовой фильтр, Ambient Occlusion,
+  Motion Blur, Bloom, свечение (Glow), Modern Lighting с тонмаппером (AgX или filmic), разрешение теней,
+  масштаб карты теней до 4x, мягкие тени (PCSS), частота обновления отражений (с режимом Auto),
+  внутреннее разрешение до 4x.
+- Game: фото (F12 в игре: сцена без HUD, в PNG) и читы из `cheats.txt` (формат NFSMW Recompiled),
+  каждый включается там же.
 - Advanced: пропуск заставок при запуске.
 
-Большая часть шейдерной работы взята из [форка AndhikaFW](https://github.com/AndhikaFW/speedbreaker).
+Большая часть шейдерной работы взята из [форка AndhikaFW](https://github.com/AndhikaFW/speedbreaker),
+мягкие тени — из [PR krittinen](https://github.com/SpeedBreakerProject/speedbreaker/pull/43).
 Smooth Motion (интерполяция кадров из основного проекта) теперь предлагается и на экранах
 120, 180 и 240 Гц под Windows и Linux.
 

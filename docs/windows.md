@@ -39,9 +39,12 @@ Check for Updates doesn't work on Windows yet: get new versions from the Release
 
 ## What the port changes
 
-The Windows code is in `runtime/compat/win`. Most of the runtime is written against POSIX, and
-`compat/win` supplies what Windows lacks: memory mapped the way the game expects, the write
-watch's page faults, sockets for the online code on Winsock, and a few file calls.
+Since upstream's own Windows port (v0.1.9 Windows beta 1) most of the Windows code is upstream's
+platform layer, `runtime/platform/win32`: guest memory mapped the way the game expects, the write
+watch's page faults, files, threads, timers, crash reports. Upstream builds it with clang-cl and
+the MSVC runtime; this fork cross-builds the same code with MinGW-w64 (below), and keeps a little
+of its own in `runtime/compat/win`: sockets for the online code on Winsock, the GPU thread's
+doorbells, a high-resolution `nanosleep`, and the POSIX headers MinGW lacks.
 
 A couple of things behave differently on Windows and are handled there:
 
