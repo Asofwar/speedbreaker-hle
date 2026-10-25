@@ -1193,7 +1193,10 @@ namespace ui
                     // Online: this machine's addresses, for the host to give
                     // the others (a VPN's too), under the rows.
                     if (category == Category::Online)
+                    {
                         OnlineAddressesText();
+                        DrawOnlinePage();
+                    }
                     // Which build this is, for bug reports by hand: under
                     // the rows, lined up with their labels.
                     if (category == Category::Advanced)

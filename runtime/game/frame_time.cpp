@@ -57,8 +57,11 @@
 #include "timedemo.h"
 #include "whole_vblanks.h"
 
+#include "mp_adapter.h"
+
 #include <debug/bench.h>
 #include <kernel/function.h>
+#include <kernel/memory.h>
 #include <video/presenter.h>
 #include <video/vblank_lock.h>
 
@@ -94,6 +97,8 @@ namespace
         bool snapped = false, pending = false;
     } s_line;  // main thread only
     game::WholeVblanks s_whole;  // main thread only
+    std::atomic<bool> s_hold{ false };          // game::SetWorldHold
+    std::atomic<uint64_t> s_worldFrames{ 0 };   // game::WorldFrameIndex
 
     // Whole vblanks are game time only at the lock's rates: NFSMW_VBLANK_HZ
     // far from 60 keeps game time as measured, in the stepper too.
@@ -115,6 +120,10 @@ namespace game
     {
         return double(s_clock.load(std::memory_order_relaxed)) / 65536.0;
     }
+
+    void SetWorldHold(bool hold) { s_hold.store(hold, std::memory_order_relaxed); }
+    bool WorldHeld() { return s_hold.load(std::memory_order_relaxed); }
+    uint64_t WorldFrameIndex() { return s_worldFrames.load(std::memory_order_relaxed); }
 }
 
 // GameFrameTime, before `bl 0x823AFE20` at 0x823B0148 in the main loop: r3 is
@@ -130,6 +139,44 @@ void GameFrameTime(PPCRegister& r3)
     static uint64_t last = 0;
     uint64_t now = video::GuestVblanks(), vblanks = now - last;
     last = now;
+    // Multiplayer (game/mp_adapter.cpp): its connection and race tracking
+    // every frame, the start barrier's hold, and the agreed race clock.
+    game::MpFramePump();
+    if (game::WorldHeld())
+    {
+        // No time passes for the world while it is held: not in the clock,
+        // not in the stepper's accumulator.
+        r3.u64 = 0;
+        s_frames.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    // Follow the agreed race clock by giving the frame a little more or less
+    // time (at most 100% more, 50% less), so a game whose loading made its
+    // game time lag (or run ahead) closes the gap within a few seconds,
+    // before the cars leave the line. Nothing outside a multiplayer race.
+    struct FollowRaceClock
+    {
+        PPCRegister& r3;
+        ~FollowRaceClock()
+        {
+            const double want = game::MpWantedClock();
+            if (want < 0)
+                return;
+            const uint32_t bits = __builtin_bswap32(*reinterpret_cast<const uint32_t*>(g_memory.base + 0x82A153B8));
+            float clockNow;
+            memcpy(&clockNow, &bits, 4);
+            if (!(clockNow > 0.0f) || !std::isfinite(clockNow))
+                return;
+            const double err = want - double(clockNow);  // seconds the world is behind (positive) or ahead
+            if (std::abs(err) < 0.02 || std::abs(err) > 30.0)
+                return;
+            const double frameMs = double(int32_t(r3.u32)) / 65536.0;
+            if (frameMs <= 0.0)
+                return;
+            const double extraMs = std::clamp(err * 1000.0 * 0.25, -0.5 * frameMs, 1.0 * frameMs);
+            r3.u64 = uint32_t(std::llround((frameMs + extraMs) * 65536.0));
+        }
+    } followRaceClock{ r3 };
     s_frames.fetch_add(1, std::memory_order_relaxed);
     double measuredMs = double(int32_t(r3.u32)) / 65536.0;
     if (s_log)
@@ -191,6 +238,9 @@ void WorldStepTime(PPCRegister& f10)
 // steps this frame runs, before the step runner's cap.
 void WorldSteps(PPCRegister& r30)
 {
+    s_worldFrames.fetch_add(1, std::memory_order_relaxed);
+    if (game::WorldHeld())
+        r30.u32 = 0;
     s_line.steps = int(r30.u32);
     if (r30.u32 == 0)
         s_noStep.fetch_add(1, std::memory_order_relaxed);

@@ -24,7 +24,7 @@ if(WIN32 AND NOT SB_MSVC_FRONTEND)
 endif()
 
 file(GLOB_RECURSE RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
-list(FILTER RUNTIME_SOURCES EXCLUDE REGEX "/thirdparty/")
+list(FILTER RUNTIME_SOURCES EXCLUDE REGEX "/thirdparty/|/net/mp_")
 # The platform layer (platform/*.h): Windows' implementation in
 # platform/win32, everyone else's in platform/posix. The MinGW cross-build
 # also takes compat/win/win_sleep.c (winpthreads' nanosleep replaced) and
@@ -65,6 +65,34 @@ if(IOS)
     # UniformTypeIdentifiers) are linked by scripts/ios/build.sh.
     file(GLOB IOS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/platform/*.mm)
     list(APPEND RUNTIME_SOURCES ${IOS_SOURCES})
+endif()
+# ENet (thirdparty/enet, vendored, C, MIT): the multiplayer transport. Plain UDP sockets, no
+# dependencies, so it builds the same on Linux, macOS, iOS, Android and Windows.
+file(GLOB ENET_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/enet/*.c)
+add_library(enet STATIC ${ENET_SOURCES})
+target_include_directories(enet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/enet/include)
+target_compile_definitions(enet PRIVATE HAS_FCNTL=1 HAS_POLL=1 HAS_GETADDRINFO=1 HAS_GETNAMEINFO=1 HAS_GETHOSTBYNAME_R=0 HAS_INET_PTON=1 HAS_INET_NTOP=1 HAS_MSGHDR_FLAGS=1 HAS_SOCKLEN_T=1)
+if(WIN32)
+    target_link_libraries(enet PUBLIC ws2_32 winmm)
+endif()
+set_target_properties(enet PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# The multiplayer layer without any game code (net/mp_*.cpp): protocol, client and dedicated server. mp_server
+# is a stand-alone program that needs no game files.
+add_library(mp_net STATIC ${CMAKE_CURRENT_SOURCE_DIR}/net/mp_client.cpp ${CMAKE_CURRENT_SOURCE_DIR}/net/mp_server.cpp ${CMAKE_CURRENT_SOURCE_DIR}/net/mp_race.cpp)
+target_include_directories(mp_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/net)
+target_link_libraries(mp_net PUBLIC enet)
+target_compile_features(mp_net PUBLIC cxx_std_20)
+add_executable(mp_server ${CMAKE_CURRENT_SOURCE_DIR}/net/mp_server_main.cpp)
+target_link_libraries(mp_server PRIVATE mp_net)
+add_executable(mp_bot ${CMAKE_CURRENT_SOURCE_DIR}/net/mp_bot_main.cpp)
+target_link_libraries(mp_bot PRIVATE mp_net)
+add_executable(mp_racebot ${CMAKE_CURRENT_SOURCE_DIR}/net/mp_racebot_main.cpp)
+target_link_libraries(mp_racebot PRIVATE mp_net)
+if(WIN32 AND NOT SB_MSVC_FRONTEND)
+    foreach(_mp mp_server mp_bot mp_racebot)
+        target_link_options(${_mp} PRIVATE -fuse-ld=lld -static -static-libgcc -static-libstdc++)
+        target_link_libraries(${_mp} PRIVATE -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group ws2_32 winmm)
+    endforeach()
 endif()
 add_library(o1heap STATIC ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/o1heap/o1heap.c)
 target_include_directories(o1heap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/o1heap)
@@ -200,7 +228,7 @@ add_custom_target(nfsmw_build_info
     VERBATIM)
 add_dependencies(SpeedBreaker nfsmw_build_info)
 
-target_link_libraries(SpeedBreaker PRIVATE NfsmwRecompLib XenonUtilsLite o1heap imgui SDL3::SDL3 Vulkan::Vulkan glslang::glslang glslang::glslang-default-resource-limits ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY})
+target_link_libraries(SpeedBreaker PRIVATE NfsmwRecompLib XenonUtilsLite o1heap imgui mp_net SDL3::SDL3 Vulkan::Vulkan glslang::glslang glslang::glslang-default-resource-limits ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY})
 # glslang before 15 (the Steam Frame's 14) keeps the C API's SPIR-V
 # generation in its own library.
 if(TARGET glslang::SPIRV)

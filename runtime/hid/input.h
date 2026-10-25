@@ -59,6 +59,9 @@ namespace hid
     // thread: the motion blur follows them (gpu/renderer.cpp).
     uint8_t GameRightTrigger();
     uint8_t GameLeftTrigger();
+    // The buttons of controller 0 (XINPUT_GAMEPAD_* bits) as the game last
+    // read them, from any thread: the multiplayer start barrier is left with B.
+    uint16_t GameButtons();
 
     // Main thread, after SDL video is up.
     void Initialize();

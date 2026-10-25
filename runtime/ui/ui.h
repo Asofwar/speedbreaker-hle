@@ -98,6 +98,12 @@ namespace ui
     // Any thread: a photo of the next frame's scene, without the HUD or the
     // menus over it, saved as a PNG (ui/photo.cpp). F12 does it too.
     void TakePhoto();
+    // The multiplayer section of the Online page (online_menu.cpp), under
+    // the page's option rows.
+    void DrawOnlinePage();
+    // The open world race over the game (mp_overlay.cpp, game/mp_hud.h):
+    // lines, a banner and markers; nothing when there is no race.
+    void DrawMpOverlay();
     // Any thread: takes down the toast with this text, showing or waiting
     // its turn, once it no longer holds (a controller connected). None:
     // nothing.

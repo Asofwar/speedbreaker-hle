@@ -29,6 +29,11 @@
 
 namespace vfs
 {
+    // A guest file the game finds at `hostPath` instead of where its path
+    // would lead (the dev start's online.cfg, game/online_cfg.cpp, from
+    // AndhikaFW's fork). Case-insensitive; one at a time.
+    void SetOverride(std::string_view guestPath, std::filesystem::path hostPath);
+
     struct Resolved
     {
         std::filesystem::path host;

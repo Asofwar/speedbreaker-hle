@@ -1,6 +1,7 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING). See ui.h.
 #include <stdafx.h>
 #include "ui.h"
+#include <game/mp_hud.h>
 #include "cursor_idle.h"
 
 #include <game/timedemo.h>
@@ -1090,7 +1091,7 @@ namespace ui
             toastText = CurrentToastLocked();
         }
         bool toast = !toastText.empty();
-        if (!s_modal && !s_settingsOpen && !perf && !toast)
+        if (!s_modal && !s_settingsOpen && !perf && !toast && !game::MpHudActive())
             return false;
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -1156,6 +1157,8 @@ namespace ui
             else if (perf)
                 DrawPerfOverlay();
         }
+        if (!s_modal)
+            DrawMpOverlay();
         if (toast)
             DrawToast(toastText);
         ImGui::Render();

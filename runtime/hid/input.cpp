@@ -1513,7 +1513,10 @@ namespace hid
     namespace
     {
         std::atomic<uint8_t> s_gameRightTrigger{ 0 }, s_gameLeftTrigger{ 0 };
+        std::atomic<uint16_t> s_gameButtons{ 0 };
     }
+
+    uint16_t GameButtons() { return s_gameButtons.load(std::memory_order_relaxed); }
 
     uint8_t GameRightTrigger() { return s_gameRightTrigger.load(std::memory_order_relaxed); }
     uint8_t GameLeftTrigger() { return s_gameLeftTrigger.load(std::memory_order_relaxed); }
@@ -1550,6 +1553,7 @@ uint32_t XamInputGetState(uint32_t userIndex, uint32_t flags, XAMINPUT_STATE* st
         p = CurrentPadLocked();
         hid::s_gameRightTrigger.store(p.rightTrigger, std::memory_order_relaxed);
         hid::s_gameLeftTrigger.store(p.leftTrigger, std::memory_order_relaxed);
+        hid::s_gameButtons.store(p.buttons, std::memory_order_relaxed);
         static Pad last;
         if (memcmp(&p, &last, sizeof(p)) != 0)
         {
