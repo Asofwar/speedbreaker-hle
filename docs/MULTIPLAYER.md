@@ -543,5 +543,7 @@ So the choice is made elsewhere: by a generator of the game's own with another f
   breakpoint on it (DR0, every thread; the host instruction mapped to its recompiled function through PPCFuncMappings) found the writer: `sub_824618C0`, a 24-byte list node
   allocator (its pool at 0x82A39580, the node's +0 to +8 from r4..r6, +12/+16 the pair at r7), called from 0x82460D6C with resource keys. The word was just a node that heap reuse
   put there; the keys are the same set in every run (70 of 81, the rest still loading), in another order. So nothing in the vehicle's memory has shown the paint yet.
-- Next, if picked up: the paint and vinyl end up in the car's skin texture; find where that texture is put together (the render target the composite draws go to when a car is
-  made) and work back from those draws' inputs to the choice.
+- Every draw of the 240 frames after the RX-8 pool car is made (about 76,000 draws a run; turquoise with a red vinyl, gold, dark green in three runs), with the pixel shaders'
+  c0..c31: no constant of the same shaders reads as the car's colour in each run. So the colour reaches the GPU another way (vertex colours, vertex shader constants, or a
+  palette texture the skin samples).
+- Next, if picked up: the same draws with the vertex shader constants and each draw's textures' contents hashed, to see which input follows the colour.
