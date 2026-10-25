@@ -92,7 +92,14 @@ namespace mp
                 const Vec3& target = def.points[size_t(r.next % n)];
                 if (SegDist(before, pos, target) <= def.radius)
                 {
-                    if (r.next == 0 || r.next % n == 0)
+                    if (def.sprint && r.next >= n - 1)
+                    {
+                        r.lap = 1;
+                        Finish(id, r, nowMs - goAt_);
+                    }
+                    else if (def.sprint)
+                        ++r.next;
+                    else if (r.next == 0 || r.next % n == 0)
                     {
                         ++r.lap;
                         r.next = 1;
@@ -248,6 +255,7 @@ namespace mp
                 d.name = name;
                 if (const char* l = strstr(line, "laps=")) d.laps = std::clamp(atoi(l + 5), 1, 50);
                 if (const char* r = strstr(line, "radius=")) d.radius = std::clamp(float(atof(r + 7)), 5.f, 200.f);
+                if (strstr(line, " sprint")) { d.sprint = true; d.laps = 1; }
                 out.push_back(d);
             }
             else if (strncmp(line, "point ", 6) == 0 && !out.empty() && sscanf(line + 6, "%f %f %f", &x, &y, &z) == 3 && out.back().points.size() < 64)

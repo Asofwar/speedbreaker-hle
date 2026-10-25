@@ -3,7 +3,8 @@
 // The open world's race rules (net/mp_race.h) without a game or a network:
 //   - a player who stops in the start marker opens the race, a second one
 //     joins during the window, the countdown runs, then the race;
-//   - checkpoints in order and laps decide the finish, places by order;
+//   - checkpoints in order and laps decide the finish, places by order; a
+//     sprint ends at its last point, without going back to the start;
 //   - a jump of more than 200 m (a teleport) passes no checkpoint;
 //   - every finish comes out of TakeFinishes once, with its race time;
 //   - records: Beats, and the records file round trip (names with spaces).
@@ -82,6 +83,38 @@ int main()
     const std::vector<FinishEvent> f = rm.TakeFinishes();
     CHECK(f.size() == 1 && f[0].id == 1 && f[0].race == 0 && f[0].ms == t - go, "%zu finish(es)", f.size());
     CHECK(rm.TakeFinishes().empty(), "a second TakeFinishes is empty");
+
+    printf("A sprint: start to the last point, once\n");
+    {
+        RaceDef sp;
+        sp.name = "dash";
+        sp.sprint = true;
+        sp.radius = 10.f;
+        sp.points = { { 0, 0, 0 }, { 150, 0, 0 }, { 300, 0, 0 } };
+        RaceManager sm;
+        sm.SetRaces({ sp });
+        uint32_t st = 1000;
+        sm.Report(7, { 0, 0, 0 }, 0.f, st);
+        st += 1600;
+        sm.Report(7, { 0, 0, 0 }, 0.f, st);
+        st += sm.gatherMs;
+        sm.Tick(st);
+        st += sm.countdownMs;
+        sm.Tick(st);
+        CHECK(sm.Phase() == RacePhase::Running, "sprint phase %d", int(sm.Phase()));
+        for (float x : { 75.f, 150.f, 225.f })
+        {
+            st += 2000;
+            sm.Report(7, { x, 0, 0 }, 40.f, st);
+        }
+        CHECK(!sm.View(st).racers.empty() && !sm.View(st).racers[0].finished, "not finished before the last point");
+        st += 2000;
+        sm.Report(7, { 300, 0, 0 }, 40.f, st);
+        const RaceView sv = sm.View(st);
+        CHECK(!sv.racers.empty() && sv.racers[0].finished && sv.racers[0].finishMs == 8000, "finished at the last point (%u ms)", sv.racers.empty() ? 0 : sv.racers[0].finishMs);
+        sm.Tick(st);
+        CHECK(sm.Phase() == RacePhase::Finished, "the race is over (%d)", int(sm.Phase()));
+    }
 
     printf("Records\n");
     CHECK(Beats({}, 1), "the first time is a record");

@@ -17,7 +17,8 @@ namespace mp
         std::string name = "race";
         int laps = 1;
         float radius = 25.f;           // metres: how close a car must come to a checkpoint or the start marker
-        std::vector<Vec3> points;      // [0] the start marker (and the line the laps end on), then the checkpoints in order
+        bool sprint = false;           // from the start to the last point, once (laps is 1); else a circuit, back over the start line each lap
+        std::vector<Vec3> points;      // [0] the start marker (and a circuit's finish line), then the checkpoints in order (a sprint's last one is its finish)
     };
 
     enum class RacePhase : uint8_t { Idle = 0, Gathering = 1, Countdown = 2, Running = 3, Finished = 4 };
@@ -40,7 +41,8 @@ namespace mp
         std::vector<RacerView> racers; // in place order
     };
 
-    // A text file of races: "race <name> laps=2 radius=25" starts one, then one "point x y z" line each (the first is the start marker); '#' starts a comment.
+    // A text file of races: "race <name> laps=2 radius=25" (or "race <name> sprint radius=25") starts one, then one "point x y z" line each (the first is the start
+    // marker); '#' starts a comment.
     bool LoadRaces(const std::string& path, std::vector<RaceDef>& out);
 
     // A racer crossed the finish line: who, in which race, the race time.

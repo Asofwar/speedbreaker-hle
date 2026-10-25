@@ -66,8 +66,10 @@ the minimap), also during a race. Use it to agree the race: the track, the direc
 
 ## Open world mode (new, 2026-10-23)
 Instead of everyone starting the same race from the menus, the game starts straight in the open world and the server runs races from markers.
-- **Server**: `build/main/runtime/mp_server 27960 scripts/mp/races.example.txt` (the second argument is the races file: `race <name> laps=N radius=M`, then `point x y z` lines, the first is the start marker; the
-  example is a lap of the Ironwood circuit recorded from an AI driver; `scripts/mp/races.test.txt` is a short loop at the world's spawn point for testing).
+- **Server**: `build/main/runtime/mp_server 27960 scripts/mp/races.example.txt` (the second argument is the races file: `race <name> laps=N radius=M` for a circuit, `race <name> sprint radius=M` for a sprint, then
+  `point x y z` lines, the first is the start marker, a sprint's last one its finish; the example has two races recorded from AI drivers, a lap of the Ironwood circuit and a 1.4 km
+  sprint; `scripts/mp/races.test.txt` is a short loop at the world's spawn point for testing). New races: `NFSMW_RECORD_PATH=<file>` appends the first AI opponent's path in a race
+  to the file as `point` lines, a point every 30 m.
 - **Records**: the server keeps each race's best time and who drove it in `<races file>.records` (next to the races file, kept between runs). A new record is announced in the chat;
   the panel shows the race's record at the start marker and during the race.
 - **Game**: in Settings > Online > Multiplayer races tick **Open world mode**, choose **your car**, and restart the game. It boots into the open world with your car (no menus), connects to the server and

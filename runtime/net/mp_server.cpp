@@ -70,7 +70,7 @@ namespace mp
             w.u8(uint8_t(rs.size()));
             for (const RaceDef& d : rs)
             {
-                w.str(d.name); w.u8(uint8_t(d.laps)); w.f32(d.radius); w.u8(uint8_t(d.points.size()));
+                w.str(d.name); w.u8(uint8_t(d.laps)); w.u8(d.sprint ? 1 : 0); w.f32(d.radius); w.u8(uint8_t(d.points.size()));
                 for (const Vec3& v : d.points) { w.f32(v.x); w.f32(v.y); w.f32(v.z); }
             }
             Send(p, kChanEvent, w, true);
@@ -406,7 +406,7 @@ namespace mp
         {
             const auto it = m->records.find(d.name);
             char b[200];
-            snprintf(b, sizeof b, "  %s: %d lap(s), %zu points, start %.0f %.0f %.0f, record %s\n", d.name.c_str(), d.laps, d.points.size(), double(d.points[0].x),
+            snprintf(b, sizeof b, "  %s: %s, %zu points, start %.0f %.0f %.0f, record %s\n", d.name.c_str(), d.sprint ? "sprint" : (std::to_string(d.laps) + " lap(s)").c_str(), d.points.size(), double(d.points[0].x),
                 double(d.points[0].y), double(d.points[0].z), it == m->records.end() || !it->second.ms ? "none" : (FormatRaceTime(it->second.ms) + " by " + it->second.name).c_str());
             out += b;
         }

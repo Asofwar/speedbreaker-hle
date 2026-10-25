@@ -492,6 +492,12 @@ namespace
         else
         {
             const mp::RaceDef& d = races[size_t(v.race)];
+            // Where a racer is: its lap on a circuit, its checkpoint on a sprint.
+            auto progressOf = [&](const mp::RacerView& r) {
+                if (d.sprint)
+                    return "checkpoint " + std::to_string(std::min<int>(r.next, int(d.points.size()) - 1)) + "/" + std::to_string(d.points.size() - 1);
+                return "lap " + std::to_string(std::min<int>(r.lap + 1, d.laps)) + "/" + std::to_string(d.laps);
+            };
             auto addStart = [&] {
                 game::MpHudMarker m;
                 m.p[0] = d.points[0].x; m.p[1] = d.points[0].y; m.p[2] = d.points[0].z;
@@ -523,15 +529,17 @@ namespace
                 char b[200];
                 if (my && v.phase == mp::RacePhase::Running && !my->finished)
                 {
-                    snprintf(b, sizeof b, "%s  lap %d/%d  place %d/%zu  %s  (%s)", d.name.c_str(), std::min<int>(my->lap + 1, d.laps), d.laps, my->place, v.racers.size(), RaceClock(v.timeMs).c_str(), recordOf(size_t(v.race)).c_str());
+                    snprintf(b, sizeof b, "%s  %s  place %d/%zu  %s  (%s)", d.name.c_str(), progressOf(*my).c_str(), my->place, v.racers.size(), RaceClock(v.timeMs).c_str(), recordOf(size_t(v.race)).c_str());
                     h.lines.push_back(b);
                     const int n = int(d.points.size());
                     for (int k = 0; k < 2; ++k)
                     {
+                        if (d.sprint && my->next + k >= n)
+                            break;   // (nothing after a sprint's finish)
                         const int idx = (my->next + k) % n;
                         game::MpHudMarker m;
                         m.p[0] = d.points[size_t(idx)].x; m.p[1] = d.points[size_t(idx)].y; m.p[2] = d.points[size_t(idx)].z;
-                        m.label = idx == 0 ? "FINISH" : "CP " + std::to_string(idx);
+                        m.label = (d.sprint ? idx == n - 1 : idx == 0) ? "FINISH" : "CP " + std::to_string(idx);
                         m.kind = k == 0 ? 1 : 2;
                         h.markers.push_back(m);
                     }
@@ -543,7 +551,7 @@ namespace
                     if (r.finished)
                         snprintf(b, sizeof b, "%d. %s  %s", r.place, nameOf(r.id).c_str(), RaceClock(r.finishMs).c_str());
                     else
-                        snprintf(b, sizeof b, "%d. %s  lap %d/%d", r.place, nameOf(r.id).c_str(), std::min<int>(r.lap + 1, d.laps), d.laps);
+                        snprintf(b, sizeof b, "%d. %s  %s", r.place, nameOf(r.id).c_str(), progressOf(r).c_str());
                     h.lines.push_back(b);
                 }
                 break;

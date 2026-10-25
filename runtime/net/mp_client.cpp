@@ -221,7 +221,7 @@ namespace mp
                     for (uint8_t i = 0; i < n && r.ok(); ++i)
                     {
                         RaceDef d;
-                        d.name = r.str(); d.laps = r.u8(); d.radius = r.f32();
+                        d.name = r.str(); d.laps = r.u8(); d.sprint = (r.u8() & 1) != 0; d.radius = r.f32();
                         const uint8_t np = r.u8();
                         for (uint8_t k = 0; k < np && r.ok(); ++k)
                         {
