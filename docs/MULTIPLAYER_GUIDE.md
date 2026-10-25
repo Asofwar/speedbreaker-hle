@@ -30,9 +30,9 @@ The settings are saved (`multiplayer.txt` in the user data folder) and take effe
 
 ## Cars (the lobby)
 Cars are set in the lobby, on the settings page (Online > *Multiplayer races*): **choose your car** from the list and tick **Ready for the next race**. Every game makes its opponents as
-the cars the *ready* players chose, in the order of their ids, and the opponent that stands for a player is that player's car (same model). Then, in the game's own **car selection, choose
-the same car** as in the lobby: your own car cannot be set from outside, so if the two differ the other players see the lobby car and a message tells you to choose it next time. The
-choices have to be made before the race loads (a car swapped in late is not drawn). The players list shows who is ready, with their cars, and who is still in the menus. Not ready any
+the cars the *ready* players chose, in the order of their ids, and the opponent that stands for a player is that player's car (same model). While you are ready, your own car in the
+next race is the lobby car too, whatever the game's car selection says (the game makes it through the path its developer start uses: the car as it comes, without your career's
+parts and paint). The choices have to be made before the race loads (a car swapped in late is not drawn). The players list shows who is ready, with their cars, and who is still in the menus. Not ready any
 more after each race. The number of players the start waits for is the number of ready players (or the number in the settings if you are not ready).
 
 ## Chat
@@ -50,8 +50,7 @@ the minimap), also during a race. Use it to agree the race: the track, the direc
 
 ## Limits
 - Other players are listed by name in the standings (during and after the race: up to ten capital letters, digits, space, `-` and `_`), and their names show over their cars (up to 400 m away,
-  also through walls). They show on the minimap like the game's own opponents (checked with a stand-in player on one machine). Your own car has to be chosen twice, in the lobby and in
-  the car selection.
+  also through walls). They show on the minimap like the game's own opponents (checked with a stand-in player on one machine).
 - Opponent cars look the same model on every machine, but paint, wheels, spoilers and vinyls are the game's random ones for that car, not the owner's own.
 - Laps and finishing places are the game's own (computed on each machine from where the cars are); the times in the standings can differ between machines.
 - The lobby sets cars and who is ready, not the race: the players agree the track and mode in the chat.

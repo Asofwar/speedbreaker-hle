@@ -1254,6 +1254,41 @@ namespace game
         g_lobbyReady = ready;
     }
     bool MpLobbyReady() { return g_lobbyReady.load(); }
+
+    std::string MpRaceCarName()
+    {
+        Adapter& a = A();
+        // The lobby's choice, or (before the frame pump has applied it: a race that starts right away) the settings' car by name and NFSMW_MP_READY.
+        const char* envCar = std::getenv("NFSMW_MP_CAR");
+        const std::string byName = envCar ? std::string(envCar) : a.cfgCar;
+        const uint64_t key = g_lobbyCar.load();
+        const bool ready = g_lobbyReady.load() || std::getenv("NFSMW_MP_READY") != nullptr;
+        if (std::getenv("NFSMW_LOG_CARS"))
+            fprintf(stderr, "[cars] the race car: server '%s', world %d, ready %d, lobby car %016llX / '%s', catalogue %zu\n", a.server.c_str(), int(a.world),
+                int(ready), (unsigned long long)key, byName.c_str(), CarCatalog().size());
+        if (a.server.empty() || a.world || !ready || (!key && byName.empty()))
+            return {};
+        // The game looks the car up by its name (the Attrib collection of the lower-case folder name), so the settings' name is enough; the catalogue only when
+        // nothing but the key is known.
+        if (!byName.empty())
+        {
+            std::string name = byName;
+            for (char& ch : name)
+                if (ch >= 'A' && ch <= 'Z')
+                    ch = char(ch + 32);
+            return name;
+        }
+        for (const CarEntry& c : CarCatalog())
+            if (c.key == key)
+            {
+                std::string name = c.name;
+                for (char& ch : name)
+                    if (ch >= 'A' && ch <= 'Z')
+                        ch = char(ch + 32);
+                return name;
+            }
+        return {};
+    }
 }
 
 namespace game

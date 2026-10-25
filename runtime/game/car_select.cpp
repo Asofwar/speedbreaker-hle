@@ -305,8 +305,41 @@ PPC_FUNC(sub_82147BF8)
 }
 
 // The player's vehicle is the first one a race creates (the vehicle table, 0x82C745A8, still has no entries), through sub_824729E0.
+//
+// It takes the car from the front end's player record (*0x82A2C684: the car's name at +1128, its customisation, 408 bytes, behind +1124) unless the dev start's
+// SKIPFE flag (0x82A2CD44) is set: then by the name at *0x828FD2C8 (online.cfg's SKIPFEPLAYERCAR, kept in the 64 bytes at 0x82A2D778). In a multiplayer race with Ready
+// ticked (game::MpRaceCarName), the flag and the name are set to the lobby car for this one call, so the player races the car the others made an opponent of, and
+// doesn't have to choose it again in the game's car selection; it comes as the car's stock one (no career customisation), as the others draw it.
+constexpr uint32_t kSkipFeFlag = 0x82A2CD44, kSkipFeCarName = 0x828FD2C8, kSkipFeCarBuffer = 0x82A2D778;
+
 PPC_FUNC(sub_824729E0)
 {
+    std::string lobbyCar;
+    uint32_t oldName = 0;
+    if (std::getenv("NFSMW_LOG_CARS"))
+        fprintf(stderr, "[cars] sub_824729E0: vehicles %u, SKIPFE %u\n", PPC_LOAD_U32(0x82C745B4), PPC_LOAD_U32(kSkipFeFlag));
+    if (PPC_LOAD_U32(0x82C745B4) == 0 && PPC_LOAD_U32(kSkipFeFlag) == 0)
+    {
+        // (A race that starts right away, a replay's, can come before the frame hook built the catalogue: build it here, with this call's context.)
+        bool built;
+        {
+            std::lock_guard<std::mutex> g(g_mutex);
+            built = g_built;
+        }
+        if (!built)
+            Build(ctx, base);
+        lobbyCar = game::MpRaceCarName();
+    }
+    if (!lobbyCar.empty() && lobbyCar.size() < 64)
+    {
+        oldName = PPC_LOAD_U32(kSkipFeCarName);
+        memcpy(base + kSkipFeCarBuffer, lobbyCar.c_str(), lobbyCar.size() + 1);
+        PPC_STORE_U32(kSkipFeCarName, kSkipFeCarBuffer);
+        PPC_STORE_U32(kSkipFeFlag, 1);
+        fprintf(stderr, "[cars] the player's car is the lobby car %s (the dev start's car path, for this race)\n", lobbyCar.c_str());
+    }
+    else
+        lobbyCar.clear();
     uint64_t want = 0;
     if (PPC_LOAD_U32(0x82C745B4) == 0)
     {
@@ -347,6 +380,11 @@ PPC_FUNC(sub_824729E0)
     t_wantedKey = want ? want : was;
     __imp__sub_824729E0(ctx, base);
     t_wantedKey = was;
+    if (!lobbyCar.empty())
+    {
+        PPC_STORE_U32(kSkipFeFlag, 0);
+        PPC_STORE_U32(kSkipFeCarName, oldName);
+    }
     if (PPC_LOAD_U32(0x82C745B4) == 1)
         game::MpPlayerCreated(base);   // the player's vehicle is the only one: tell the others which car it is
 }

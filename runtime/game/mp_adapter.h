@@ -13,6 +13,9 @@ namespace game
     // The settings page: the car this player chose in the lobby (its type key, from game::CarCatalog) and whether it is ready for the next race. Any thread.
     void MpSetLobby(uint64_t carKey, bool ready);
     bool MpLobbyReady();
+    // The car the next race's player car is made as (game/car_select.cpp): the lobby car's folder name in lower case, when Join multiplayer races is on, Ready for the
+    // next race is ticked and a car is chosen, outside open world mode; "" otherwise (the game's own choice stands). Ready is cleared after each race.
+    std::string MpRaceCarName();
     // From game/car_select.cpp, on the guest thread: the player's vehicle was just created; the race script is about to create its opponents.
     void MpPlayerCreated(uint8_t* base);
     void MpBeforeOpponents(uint8_t* base);
