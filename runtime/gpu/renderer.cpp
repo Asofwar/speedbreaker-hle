@@ -39,6 +39,7 @@
 #include <game/hfr.h>
 #include <user/paths.h>
 #include <hid/input.h>
+#include <game/player_speed.h>
 #include <user/settings.h>
 #include <game/cover_callers.h>
 #include <game/split_screen.h>
@@ -8913,13 +8914,20 @@ void main()
             speed = std::max(0.0f, speed + (drive - brake * 70.0f - drag) * dt);
             if (speed < 0.5f && throttle < 0.05f)
                 speed = 0.0f;
+            // The car's own speed where the game's vehicle table has the
+            // player's car (game/player_speed.h): collisions, slides and the
+            // cutscenes' driving too. The pedals' estimate follows it, so a
+            // car lost for a moment picks up from there.
+            const float real = game::PlayerSpeedKph();
+            if (real >= 0.0f)
+                speed = real;
             // A little softening on top, so a jerky press doesn't make the blur twitch.
             smooth += (speed - smooth) * (1.0f - std::exp(-dt / 0.15f));
             if (logSpeed && now - lastLog > std::chrono::milliseconds(500))
             {
                 lastLog = now;
-                fprintf(stderr, "[speed] f%llu: estimate %.1f km/h (accelerator %.2f, brake %.2f); memory reading %.1f\n", (unsigned long long)s_frame,
-                    smooth, throttle, brake, ReadSpeedKph());
+                fprintf(stderr, "[speed] f%llu: %.1f km/h, the car's %.1f (accelerator %.2f, brake %.2f); memory reading %.1f\n", (unsigned long long)s_frame,
+                    smooth, real, throttle, brake, ReadSpeedKph());
             }
             const float t = std::clamp((smooth - 10.0f) / 140.0f, 0.0f, 1.0f);
             return t * t * (3.0f - 2.0f * t);
