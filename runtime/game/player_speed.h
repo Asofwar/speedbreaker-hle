@@ -6,7 +6,7 @@
 // is the player's vehicle; its component at +128 points (+48) at a pointer to
 // its rigid body, whose linear velocity (x y z, metres a second, big-endian floats) is
 // at +0x20. As AndhikaFW's multiplayer adapter found them (game/mp_adapter.cpp
-// in their fork). Any thread: plain reads of guest memory, a frame late at
+// in their fork). One caller (the renderer): plain reads of guest memory, a frame late at
 // worst.
 #pragma once
 

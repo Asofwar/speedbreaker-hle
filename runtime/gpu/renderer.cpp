@@ -2522,7 +2522,9 @@ vec2 rotatePcssSample(vec2 sampleOffset)
         sampleOffset.x * g_pcssRotation.y + sampleOffset.y * g_pcssRotation.x);
 }
 
-float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int group, int tap)
+// `raw`: the tap the game fetched (its own compare is used when the search
+// finds no blocker: a caster thinner than the search's spacing).
+float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int group, int tap, float raw)
 {
     ivec2 size = textureSize(shadowMap, 0);
     ivec2 maxPixel = size - ivec2(1);
@@ -2537,9 +2539,9 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
         g_pcssRotation = vec2(cos(angle), sin(angle));
         float blockerDepth = 0.0;
         int blockerCount = 0;
-        for (int i = 0; i < 8; ++i)
+        for (int i = 0; i < 9; ++i)
         {
-            vec2 offset = rotatePcssSample(kPcssPoisson[i]) * (PCSS_MAX_RADIUS * texelScale);
+            vec2 offset = i == 8 ? vec2(0.0) : rotatePcssSample(kPcssPoisson[i]) * (PCSS_MAX_RADIUS * texelScale);
             float depth = texelFetch(shadowMap, clamp(ivec2(floor(center + offset)), ivec2(0), maxPixel), 0).x;
             if (depth < receiverDepth)
             {
@@ -2551,7 +2553,7 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
             clamp((receiverDepth - blockerDepth / float(blockerCount)) * PCSS_SCALE, 1.0, PCSS_MAX_RADIUS);
     }
     if (g_pcssRadius <= 0.0)
-        return receiverDepth + 1.0;
+        return raw;
     vec2 offset = rotatePcssSample(kPcssPoisson[tap]) * (g_pcssRadius * texelScale);
     float depth = texelFetch(shadowMap, clamp(ivec2(floor(center + offset)), ivec2(0), maxPixel), 0).x;
     return depth >= receiverDepth ? receiverDepth + 1.0 : receiverDepth - 1.0;
@@ -4338,7 +4340,10 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
         // or a driver that has changed.
         bool PrewarmKeyUsable(const PipelineKey& key)
         {
-            if (((key.raster >> 6) & 1) != uint32_t(s_dynamicState) || (key.raster >> 7) != 0 || key.pad != 0)
+            // (pad: Shadow Filtering's PCSS and its slot, when it is on.)
+            const bool pcssPad = (key.pad >> 5) == uint32_t(settings::ShadowFilteringMode::Pcss) &&
+                settings::GetInt(settings::Id::ShadowFiltering) == int32_t(settings::ShadowFilteringMode::Pcss);
+            if (((key.raster >> 6) & 1) != uint32_t(s_dynamicState) || (key.raster >> 7) != 0 || (key.pad != 0 && !pcssPad))
                 return false;
             if (s_dynamicState && ((key.raster & 7) != 0 || key.depthControl != 0))
                 return false;
@@ -5640,16 +5645,19 @@ void main()
             return true;
         }
         // A page held by `t` no longer is: its samples are gone (`t` dropped).
+        // (The scene's pool's: only its resolves host, whatever pool is in use
+        // as `t` goes, a texture evicted to make room in a shadow map lookup.)
         void ReleaseHeldPages(const void* t, uint32_t base, uint32_t size)
         {
-            if (!s_scaled->enabled || size == 0 || s_scaled->pageHeld.empty())
+            ScaledMemory& scene = s_sceneScaled;
+            if (!scene.enabled || size == 0 || scene.pageHeld.empty())
                 return;
             uint32_t first = base >> 12, last = std::min<uint32_t>((base + size - 1) >> 12, kGuestPages - 1);
             for (uint32_t page = first; page <= last; page++)
-                if (s_scaled->pageHeld[page] == t)
+                if (scene.pageHeld[page] == t)
                 {
-                    s_scaled->pageHeld[page] = nullptr;
-                    s_scaled->pageSeq[page] = 0;
+                    scene.pageHeld[page] = nullptr;
+                    scene.pageSeq[page] = 0;
                 }
         }
         std::unordered_map<uint64_t, std::unique_ptr<Texture>> s_textures;
@@ -6161,16 +6169,20 @@ void main()
             // height; gpu/render_scale.h), below 1x of whole 2x2, 4x4 or
             // 8x8 ones (the scene's 1280x720 and 640x720 are).
             // The sun's shadow map samples the shadow pool's at its own
-            // scale in any draw (ShadowPool, for the rest of this lookup).
+            // scale in any draw (its pool: `pool`; ShadowPool around the
+            // calls that work on the pool in use).
             const bool shadowPool = ShadowTexture(fi, width, height);
-            ShadowPool shadowScope(shadowPool);
+            ScaledMemory& pool = shadowPool ? s_shadowScaled : s_sceneScaled;
             bool scaledCandidate = !cube && !volume && f.tiled && layers == 1 && !f.stacked &&
-                ScaledFormat(fi, shadowPool) && offX == 0 && offY == 0 && maxLevel == 0 && s_scaled->scale.Exact(width, height) &&
-                s_scaled->scale.HostPixels(width, height) * 4 <= s_scaled->scratchSize;
+                ScaledFormat(fi, shadowPool) && offX == 0 && offY == 0 && maxLevel == 0 && pool.scale.Exact(width, height) &&
+                pool.scale.HostPixels(width, height) * 4 <= pool.scratchSize;
             // Which scaled texture this is (its cache key's surface fields):
             // pages only a scaled texture holds are current for it alone.
             const uint64_t sig = ScaledSignature(format, width, height, pitchAligned, uint32_t(f.endianness));
-            bool scaled = (s_drawScaled || shadowPool) && s_scaled->enabled && scaledCandidate && ScaledTextureValid(base, size, sig);
+            bool scaled = (s_drawScaled || shadowPool) && pool.enabled && scaledCandidate && [&] {
+                ShadowPool shadowScope(shadowPool);
+                return ScaledTextureValid(base, size, sig);
+            }();
             sampler = GetSampler(f, maxLevel);
             if (out)
                 *out = { nullptr, base, size, mipBase, mipSize, scaledCandidate, sig, shadowPool };
@@ -6203,19 +6215,19 @@ void main()
                 if (scaled)
                 {
                     t.convert = fi.convert;
-                    t.width = s_scaled->scale.x.Size(width);
-                    t.height = s_scaled->scale.y.Size(height);
+                    t.width = pool.scale.x.Size(width);
+                    t.height = pool.scale.y.Size(height);
                     t.guestWidth = width;
                     t.guestHeight = height;
                     t.scaledSig = sig;
-                    s_scaled->textures++;
+                    pool.textures++;
                 }
                 // A 1x texture the untile can store directly (see
                 // s_untileStorePipeline): 2D, or a cube (NFSMW_DIRECT_CUBE).
                 bool direct1x = !scaled && s_untileDirect && !volume && maxLevel == 0 && fi.block == 1 &&
                     LoadedBpbLog2(fi) == 2 && (cube ? s_directCube && layers == 6 && !f.stacked : layers == 1) &&
                     DirectFormat(fi.vk, cube);
-                if ((scaled && s_scaled->direct) || direct1x)
+                if ((scaled && pool.direct) || direct1x)
                 {
                     // The untile stores its words through an R32_UINT view
                     // (every scaled format is 32 bits a texel, as is each
@@ -11908,7 +11920,8 @@ void main()
             // HFR (game/hfr.h) needs the GPU's execution time for its load
             // check: the busy time (submit to seen done) counts the queue's
             // waits too, and read 9-12 ms a frame where execution took 5-8.
-            // Reflection Refresh's Auto too (as set at start).
+            // Reflection Refresh's Auto too (chosen at start; later, see the
+            // option's note).
             if (const char* v = std::getenv("NFSMW_GPU_TIMING"); (v && v[0] == '1') ||
                 (!(v && v[0] == '0') && (hfr::Enabled() || settings::GetInt(settings::Id::ReflectionRefresh) == 0)))
                 if (vkCreateQueryPool(s_dev, &qpci, nullptr, &s_timestamps) != VK_SUCCESS)

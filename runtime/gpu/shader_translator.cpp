@@ -574,8 +574,8 @@ float xmul(float a, float b)
                     out.pcssSlotMask |= 1u << t.slot;
                     Line("#ifdef SHADOW_PCSS");
                     Line(std::format("#if SHADOW_PCSS_SLOT == {}", t.slot));
-                    Line(std::format("{}.{} = shadowPcssSample(t2d_{}, g_pcssUv[{}], ({}).{}, {}, {});", base, kComp[comp],
-                        t.slot, t.index, receiverVec, kComp[lane], t.ordinal / 9, t.ordinal % 9));
+                    Line(std::format("{}.{} = shadowPcssSample(t2d_{}, g_pcssUv[{}], ({}).{}, {}, {}, {}.{});", base, kComp[comp],
+                        t.slot, t.index, receiverVec, kComp[lane], t.ordinal / 9, t.ordinal % 9, base, kComp[comp]));
                     Line("#endif");
                     Line("#endif");
                     pcssTaps.erase(tap);

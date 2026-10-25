@@ -414,7 +414,7 @@ namespace settings
               .env = "NFSMW_SHADOW_FILTERING", .defaultValue = double(ShadowFilteringMode::Original), .entries = kShadowFilteringEntries },
             { .id = Id::ReflectionRefresh, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
               .table = "video", .key = "reflection_refresh", .label = "Reflection Refresh",
-              .description = "The cars' reflections come from a cube map the game redraws (six passes) every frame, about a fifth of a heavy frame. Redrawing only some faces each frame, in turn, makes it much cheaper; the reflections then update a little less often. Auto: every frame while the GPU keeps up, every 3rd when it doesn't.",
+              .description = "The cars' reflections come from a cube map the game redraws (six passes) every frame, about a fifth of a heavy frame. Redrawing only some faces each frame, in turn, makes it much cheaper; the reflections then update a little less often. Auto: every frame while the GPU keeps up, every 3rd when it doesn't (from the next start when picked here: it needs the GPU's timings).",
               .env = "NFSMW_REFLECTION_REFRESH", .defaultValue = 1, .entries = kReflectionEntries },
             { .id = Id::WindowWidth, .category = Category::Display, .type = Type::Int, .apply = Apply::Restart, .hidden = true,
               .table = "video", .key = "window_width", .label = "Window Width",

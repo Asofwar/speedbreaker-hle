@@ -3,6 +3,7 @@
 #include "player_speed.h"
 #include <kernel/memory.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -60,6 +61,20 @@ namespace game
         const float speed = std::sqrt(x * x + y * y + z * z);
         if (!std::isfinite(speed) || speed > 150.0f)  // (540 km/h: not a car's)
             return -1.0f;
+        // A paused game keeps the body's velocity but not its place: a car
+        // that hasn't moved for a quarter of a second stands (its position
+        // at +0x10).
+        static float lastPos[3] = {};
+        static auto movedAt = std::chrono::steady_clock::now();
+        const float pos[3] = { LoadFloat(body + 0x10), LoadFloat(body + 0x14), LoadFloat(body + 0x18) };
+        const auto now = std::chrono::steady_clock::now();
+        if (memcmp(pos, lastPos, sizeof(pos)) != 0)
+        {
+            memcpy(lastPos, pos, sizeof(pos));
+            movedAt = now;
+        }
+        else if (now - movedAt > std::chrono::milliseconds(250))
+            return 0.0f;
         return speed * 3.6f;
     }
 }
