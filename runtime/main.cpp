@@ -39,6 +39,7 @@
 #include <ui/ui.h>
 #include <user/paths.h>
 #include <online/online.h>
+#include <game/cheats.h>
 #include <user/settings.h>
 #include <user/version_check.h>
 
@@ -698,6 +699,7 @@ int main(int argc, char** argv)
     // snapshot, before the game can read the save (a replay without its log
     // ends here).
     timedemo::Start(sha);
+    game::cheats::Start();  // game/cheats.h: cheats.txt's writes (none in a timedemo)
 
     GuestMainParams params{ uint32_t(image.entry_point), DEFAULT_GUEST_STACK };
     if (auto* stack = static_cast<const be<uint32_t>*>(getOptHeaderPtr(file.data(), XEX_HEADER_DEFAULT_STACK_SIZE)))

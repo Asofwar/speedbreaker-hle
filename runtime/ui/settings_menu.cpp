@@ -14,6 +14,7 @@
 #include "quit_game.h"
 
 #include <game/language.h>  // the Language row's note: what the installed files give
+#include <game/cheats.h>    // the Game page's cheats, one row each
 #include <report/report.h>
 #include <online/online.h>
 #include <user/settings.h>
@@ -64,6 +65,7 @@ namespace ui
         constexpr const char* kNoKey = "none";
         // The Wheel page's Calibrate row (CalibrateRow; hid/wheel.h runs it).
         bool s_describedCal = false;  // the help line describes that row
+        int s_describedCheat = -1;      // ...or a cheat's row (its index; -2: Reload Cheats)
 
         void EndWait()
         {
@@ -103,8 +105,8 @@ namespace ui
         {
             if (c == Category::Wheel)
                 return hid::wheel::Found();
-            if (c == Category::Game)  // its one row, Language, isn't shown on iPhone and iPad
-                return !settings::Info(Id::GameLanguage).hidden;
+            if (c == Category::Game)  // Language isn't shown on iPhone and iPad; the cheats' rows always are
+                return true;
 #if defined(__APPLE__) && TARGET_OS_IOS
             if (c == Category::Controls)
                 return SDL_HasKeyboard();
@@ -769,8 +771,41 @@ namespace ui
         }
 #endif
 
+        // Settings > Game: a row a cheat in cheats.txt (game/cheats.h), A or
+        // a click switching it, then Reload Cheats (the file read again).
+        void CheatRows(float valueWidth)
+        {
+            const std::vector<game::cheats::Cheat> list = game::cheats::List();
+            for (size_t i = 0; i < list.size(); i++)
+            {
+                bool described = false;
+                const std::string id = "cheat-" + std::to_string(i);
+                if (ActionRow(id.c_str(), list[i].name.c_str(), list[i].on ? "On" : "Off", valueWidth, described))
+                    game::cheats::Set(i, !list[i].on);
+                if (described)
+                    s_describedCheat = int(i);
+            }
+            bool described = false;
+            if (ActionRow("cheats-reload", "Reload Cheats", list.empty() ? "None yet" : "Reload", valueWidth, described))
+                game::cheats::Reload();
+            if (described)
+                s_describedCheat = -2;
+        }
+
         void HelpLine()
         {
+            if (s_describedCheat != -1)
+            {
+                const std::vector<game::cheats::Cheat> list = game::cheats::List();
+                if (s_describedCheat >= 0 && size_t(s_describedCheat) < list.size())
+                    ImGui::TextWrapped("%s", list[size_t(s_describedCheat)].note.empty() ? "A cheat from cheats.txt."
+                                                                                       : list[size_t(s_describedCheat)].note.c_str());
+                else
+                    ImGui::TextWrapped("Cheats come from %s (it explains the format; NFSMW Recompiled's cheats work as they are). "
+                                       "A: read it again after an edit.", game::cheats::FilePath().c_str());
+                ImGui::TextDisabled("They write to the game's memory: back up your save first. None run in a timedemo.");
+                return;
+            }
             if (s_describedOnline >= 0)
             {
                 ImGui::TextWrapped("%s", s_describedOnline == 0
@@ -1019,6 +1054,7 @@ namespace ui
         s_describedUpdate = false;
         s_describedOnline = -1;
         s_describedCal = false;
+        s_describedCheat = -1;
         if (s_waiting != Id::Count && settings::Info(s_waiting).category != s_category)
             EndWait();
         if (hid::wheel::Calibrating() && s_category != Category::Wheel)
@@ -1121,6 +1157,8 @@ namespace ui
                             OnlineTextRow(0, valueWidth);
                             OnlineTextRow(1, valueWidth);
                         }
+                        if (category == Category::Game)
+                            CheatRows(valueWidth);
                         ImGui::EndTable();
                     }
                     ImGui::PopStyleVar();
