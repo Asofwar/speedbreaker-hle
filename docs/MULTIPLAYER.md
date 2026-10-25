@@ -559,5 +559,12 @@ So the choice is made elsewhere: by a generator of the game's own with another f
 - Every resource key `sub_824618C0` gets (once each, with the guest call chain from the stack's back chain: 0(r1), the saved LR 8 bytes below each frame): about 850 a run, 840 in
   three runs alike; the 7 to 13 that differ all come through one path, 8245FF28 < 8243DAE8 < 8221AA18 < 8221B09C < 82217290 < 823B9BA8 (the streaming side), the common ones
   through the start-up path (8221AF60 < 823B023C ...). Whether those keys are the car's parts or the world streamed around it, the keys alone don't say.
-- Next, if picked up: dump the differing 1024x1024 texture as a picture (the renderer has no texture dump yet: untile and decode it as the texture cache does) to tell the skin
-  from the world, then follow its load request back (the 82217290 path) to the car part that names it. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
+- **Found: the paint and the vinyl are one 1024x1024 texture per car, its skin.** Zeroing the 1 MB of the higher-addressed 1024x1024 texture the car shader 48553c3b samples
+  (through the CPU's view, so the texture cache loads it again) turned the rival's RX-8 solid black, paint and vinyl gone, and left the player's IS300 as it was. It isn't drawn
+  by the GPU (no resolve goes to it), so the game puts it together on the CPU or loads it so.
+- Next, if picked up, two ways:
+  1. the owner's own skin over the network: the owner's game reads its car's skin (the same layout for the same model on every machine), sends it once per race (1 MB, in
+     reliable chunks), and every other game writes it into the opponent's skin; a car's skin is found by matching the car shader's draws to the car by the world position in its
+     vertex shader constants (c1/c3 carry it) against the bodies the multiplayer layer knows;
+  2. the same paint everywhere without sending it: a write watch on the skin (its address once the car's textures are allocated) names the function that composites it, and
+     its inputs (the paint and vinyl chosen) can be fixed per player. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
