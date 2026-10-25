@@ -133,6 +133,14 @@ namespace settings
             { 32, "4x", "4x (2880p)" },
         };
 
+        constexpr EnumEntry kQualityEntries[] = {
+            { int32_t(GraphicsQualityPreset::Custom), "custom", "Custom" },
+            { int32_t(GraphicsQualityPreset::Original), "original", "Original" },
+            { int32_t(GraphicsQualityPreset::Performance), "performance", "Performance" },
+            { int32_t(GraphicsQualityPreset::High), "high", "High" },
+            { int32_t(GraphicsQualityPreset::Ultra), "ultra", "Ultra" },
+        };
+
         constexpr EnumEntry kShadowEntries[] = {
             { 1600, "1600", "1600 (original)" },
             { 1200, "1200", "1200" },
@@ -289,6 +297,12 @@ namespace settings
               .table = "video", .key = "present_scale", .label = "Screen Resolution",
               .description = "75%: the picture and these menus at 3/4 of the screen's resolution each way, scaled up by iOS: a little softer, a little less GPU work.",
               .env = "NFSMW_SCREEN_RESOLUTION", .defaultValue = 100, .entries = kPresentScaleEntries },
+            { .id = Id::GraphicsQuality, .category = Category::Graphics, .type = Type::Enum, .apply = Apply::Live,
+              .table = "video", .key = "quality", .label = "Quality",
+              .description = "Sets the options that cost the most GPU time at once. Original: as on the Xbox 360. Performance: lighter "
+                  "(smaller shadow map, reflections redrawn in turn), for a Steam Deck at a low TDP. High: sharper and soft shadows, "
+                  "some ambient occlusion and motion blur. Ultra: the most of each. Changing one of them by hand makes it Custom.",
+              .env = "NFSMW_QUALITY", .defaultValue = double(GraphicsQualityPreset::Custom), .entries = kQualityEntries },
             { .id = Id::AntiAliasing, .category = Category::Graphics, .type = Type::Bool, .apply = Apply::Live,
               .table = "video", .key = "anti_aliasing", .label = "Anti-Aliasing",
               .description = "Smooth jagged edges (the 360 used 2x MSAA; this is an FXAA-style pass).",
@@ -1445,7 +1459,61 @@ namespace settings
         return false;
     }
 
+    namespace
+    {
+        // What each Graphics > Quality preset sets (GraphicsQualityPreset's
+        // order, Custom first: nothing).
+        struct PresetValue { Id id; double values[5]; };
+        constexpr PresetValue kPresets[] = {
+            //                               Custom Original Perf.  High   Ultra
+            { Id::ShadowResolution,  { 0, 1600, 800, 1600, 1600 } },
+            { Id::ShadowScale,       { 0, 8, 8, 16, 32 } },
+            { Id::ShadowFiltering,   { 0, double(ShadowFilteringMode::Original), double(ShadowFilteringMode::Original),
+                                       double(ShadowFilteringMode::Pcss), double(ShadowFilteringMode::Pcss) } },
+            { Id::ReflectionRefresh, { 0, 1, 3, 1, 1 } },
+            { Id::AmbientOcclusion,  { 0, 0.0, 0.0, 0.5, 0.8 } },
+            { Id::MotionBlur,        { 0, 0.0, 0.0, 0.3, 0.5 } },
+        };
+        thread_local bool t_applyingPreset = false;
+
+        SetResult SetOne(Id id, double value);
+    }
+
     SetResult Set(Id id, double value)
+    {
+        const SetResult result = SetOne(id, value);
+        if (result == SetResult::Invalid || result == SetResult::Unchanged || t_applyingPreset)
+            return result;
+        if (id == Id::GraphicsQuality)
+        {
+            const int32_t preset = int32_t(GetStoredValue(Id::GraphicsQuality));
+            if (preset > 0 && preset < 5)
+            {
+                t_applyingPreset = true;
+                for (const PresetValue& p : kPresets)
+                    SetOne(p.id, p.values[preset]);
+                t_applyingPreset = false;
+            }
+            return result;
+        }
+        for (const PresetValue& p : kPresets)
+            if (p.id == id)
+            {
+                const int32_t preset = int32_t(GetStoredValue(Id::GraphicsQuality));
+                if (preset > 0 && preset < 5 && GetStoredValue(id) != p.values[preset])
+                {
+                    t_applyingPreset = true;
+                    SetOne(Id::GraphicsQuality, double(GraphicsQualityPreset::Custom));
+                    t_applyingPreset = false;
+                }
+                break;
+            }
+        return result;
+    }
+
+    namespace
+    {
+    SetResult SetOne(Id id, double value)
     {
         size_t i = size_t(id);
         const Option& o = kOptions[i];
@@ -1470,6 +1538,7 @@ namespace settings
         if (changed)
             Notify({ &id, 1 });
         return result;
+    }
     }
 
     SetResult Reset(Id id)

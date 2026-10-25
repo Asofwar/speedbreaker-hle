@@ -376,6 +376,7 @@ set_target_properties(key_names_test PROPERTIES SKIP_BUILD_RPATH OFF)
 # The Key options (Settings > Controls): the table, the [keys] names in the
 # file, and what Set accepts (user/settings.cpp and the toml++ XenonRecomp
 # vendors; no SDL).
+sb_test(settings_quality_test SOURCES ${RT}/user/settings.cpp)
 sb_test(settings_keys_test SOURCES ${RT}/user/settings.cpp)
 target_include_directories(settings_keys_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
 # Settings > Game > Language (game/language.h, header only, and the option in

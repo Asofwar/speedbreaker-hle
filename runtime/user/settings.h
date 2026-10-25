@@ -45,6 +45,7 @@ namespace settings
         FrameRate,
         SmoothMotion,  // HFR (game/hfr.h): shown where the display can show it (video::HfrOffered)
         PresentScale,  // shown on iOS only
+        GraphicsQuality,  // GraphicsQualityPreset: sets the options it covers (user/settings.cpp's kPresets)
         AntiAliasing,
         Scaling,
         AspectRatio,
@@ -199,6 +200,18 @@ namespace settings
         Original = 0,
         Soft = 1,
         Off = 2,
+    };
+
+    // Graphics > Quality: one choice for the options that cost GPU time the
+    // most (the shadows, the reflections, ambient occlusion, motion blur).
+    // Picking one sets them; changing any of them by hand makes it Custom.
+    enum class GraphicsQualityPreset : int32_t
+    {
+        Custom = 0,
+        Original = 1,     // as on the Xbox 360
+        Performance = 2,  // lighter than the 360: a Steam Deck at a low TDP
+        High = 3,
+        Ultra = 4,
     };
 
     // Graphics > Shadow Filtering: the game's own nine-tap filter, or soft
