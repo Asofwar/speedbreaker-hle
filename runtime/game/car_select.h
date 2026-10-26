@@ -31,4 +31,6 @@ namespace game
     uint64_t CarKeyOfRecord(const uint8_t* base, uint32_t record);
     // The game's racer collection key for a car name (the hash of the lower-case folder name): what its opponent-creation native takes to make that car.
     uint32_t RacerKeyOf(const std::string& carName);
+    // Whether the cars this thread makes from now on stand for other players (stock parts instead of the game's random ones; NFSMW_MP_STOCK_PARTS=0 turns it off). Returns the old value.
+    bool StockPartsFor(bool on);
 }

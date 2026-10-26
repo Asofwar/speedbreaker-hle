@@ -589,4 +589,17 @@ Way 1, built:
 - `NFSMW_MP_SKINS=0` turns it off.
 - Checked with two Windows clients on one machine: in the open world an IS300 player saw the other's RX-8 in its owner's stock red, and with the cars swapped the BMW that stood
   for an IS300 (not in the pool) was left alone; in a Custom Race (RX-8 against Supra) each saw the other's car in its owner's colours (red RX-8, black Supra). Spoilers and
-  body kits are parts, not the skin: they stay the game's own.
+  body kits are parts, not the skin: see the next section.
+
+### Parts: stock on every machine (2026-10-27)
+- Wheels, spoiler, body kit, hood, roof, window tint are parts of the 408-byte customisation record a vehicle is built from (+0: a part index for each of 139 slots). The
+  opponent creation (sub_82333680) fills it from a preset ride if the script names one (sub_822CDBC0), else from a RideInfo: SetStockParts (sub_824EE090), then
+  SetRandomParts (sub_824EE4D0: random parts for one of three groups of slots, among them 23 BODY, 44 SPOILER, 66 FRONT_WHEEL, 131 WINDOW_TINT; the game's own xorshift at
+  0x829043AC), then the ride into the record (sub_822CDAB8). The vehicle model (sub_824E5E68) gets stock parts when it has no record.
+- Every player's own car in a multiplayer game is the car's stock one (the lobby car or the dev start's, made by name, without the front end's career record). So a car that
+  stands for a player (a race opponent made as a player's car, an open-world pool car) gets only the stock parts: SetRandomParts calls SetStockParts alone then
+  (`game::StockPartsFor`, car_select.cpp). Nothing goes over the network. `NFSMW_MP_STOCK_PARTS=0` turns it off.
+- Checked with fe2.ps1 (RX-8 against Supra) and mp2s.ps1: before, the other player's RX-8 had a body kit, a big spoiler and tinted windows, the Supra a wing and other wheels;
+  now both look as on their owner's screen. The players' cars went through SetRandomParts, not a preset ride (NFSMW_LOG_CARS=1 logs a preset ride).
+- A player's career car (its own parts) would need its record sent (139 part indices, or the parts' name hashes if the part packs can load in another order) and written in
+  sub_822CDAB8's place; not done, as multiplayer has no career car yet.

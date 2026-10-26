@@ -15,6 +15,7 @@
 #include <kernel/function.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <map>
@@ -24,6 +25,9 @@ extern "C" PPC_FUNC(__imp__sub_823AFE20);   // the game's frame (the main loop c
 extern "C" PPC_FUNC(__imp__sub_82144CA0);   // the string key
 extern "C" PPC_FUNC(__imp__sub_82333680);   // the script native that creates a racing opponent
 extern "C" PPC_FUNC(__imp__sub_82147BF8);   // instantiates a car from its template
+extern "C" PPC_FUNC(__imp__sub_824EE4D0);   // RideInfo::SetRandomParts
+extern "C" PPC_FUNC(__imp__sub_824EE090);   // RideInfo::SetStockParts
+extern "C" PPC_FUNC(__imp__sub_822CDBC0);   // fills a customisation record from a preset ride
 extern "C" PPC_FUNC(__imp__sub_824729E0);
 extern "C" PPC_FUNC(__imp__sub_82468148);   // creates the first vehicle of a race: the player's
 
@@ -40,6 +44,7 @@ namespace
     std::chrono::steady_clock::time_point g_lastOpponent = std::chrono::steady_clock::now() - std::chrono::hours(1);
     uint64_t g_playerKey = 0;
     thread_local uint64_t t_wantedKey = 0;
+    thread_local bool t_stockParts = false;   // the car being made stands for another player: stock parts, as that player's own car is
 
     // The game's 32-bit name hash (Bob Jenkins' lookup2, seed 0xABCDEF00) of the lower-case text: the key of an Attrib collection. The racer collections the script hands to
     // sub_82333680 are named after the car (checked: "tt" 193A8BC8, "cobaltss" 5A784095, "punto" A6EE7A11 are the keys of the three opponents of the Ironwood circuit race).
@@ -214,6 +219,13 @@ namespace game
         std::lock_guard<std::mutex> g(g_mutex);
         g_opponentIndex = 0;
     }
+    bool StockPartsFor(bool on)
+    {
+        const bool was = t_stockParts;
+        static const bool enabled = [] { const char* e = std::getenv("NFSMW_MP_STOCK_PARTS"); return !(e && e[0] == '0'); }();
+        t_stockParts = on && enabled;
+        return was;
+    }
     uint64_t CarKeyOfRecord(const uint8_t* base, uint32_t record)
     {
         if (record < 0x10000 || record > 0xD0000000)
@@ -284,7 +296,9 @@ PPC_FUNC(sub_82333680)
         ctx.r4.u64 = strtoull(rk, nullptr, 16);
     if (std::getenv("NFSMW_LOG_CARS"))
         fprintf(stderr, "[cars] opponent script call: racer key (r4) = %016llX\n", (unsigned long long)ctx.r4.u64);
+    const bool wasStock = game::StockPartsFor(want != 0);
     __imp__sub_82333680(ctx, base);
+    game::StockPartsFor(wasStock);
     t_wantedKey = 0;
     {
         std::lock_guard<std::mutex> g(g_mutex);
@@ -302,6 +316,30 @@ PPC_FUNC(sub_82147BF8)
                 ctx.r4.u64 = w;
     }
     __imp__sub_82147BF8(ctx, base);
+}
+
+// Body kit, spoiler, wheels: an opponent without a preset ride gets the car's stock parts (sub_824EE090, RideInfo::SetStockParts), then random ones for one of three groups of slots
+// (sub_824EE4D0, RideInfo::SetRandomParts, the game's own xorshift at 0x829043AC); sub_822CDAB8 writes the ride into the 408-byte record the vehicle is built from. Every player's
+// own car in a multiplayer race is the car's stock one (sub_824729E0 below), so a car standing for a player gets only the stock parts, and looks the same on every machine.
+PPC_FUNC(sub_824EE4D0)
+{
+    if (t_stockParts)
+    {
+        static std::atomic<bool> s_said{ false };
+        if (!s_said.exchange(true, std::memory_order_relaxed))
+            fprintf(stderr, "[cars] a car standing for a player gets the stock parts (NFSMW_MP_STOCK_PARTS=0: the game's random ones)\n");
+        __imp__sub_824EE090(ctx, base);
+        return;
+    }
+    __imp__sub_824EE4D0(ctx, base);
+}
+
+// A preset ride (the race script's parameters name one) fills the record instead (sub_822CDBC0), with that preset's parts.
+PPC_FUNC(sub_822CDBC0)
+{
+    if (t_stockParts && std::getenv("NFSMW_LOG_CARS"))
+        fprintf(stderr, "[cars] a car standing for a player is made from a preset ride\n");
+    __imp__sub_822CDBC0(ctx, base);
 }
 
 // The player's vehicle is the first one a race creates (the vehicle table, 0x82C745A8, still has no entries), through sub_824729E0.

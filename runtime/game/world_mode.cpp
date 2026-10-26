@@ -43,7 +43,9 @@ namespace
         PPCContext saved = ctx;
         ctx.r3.u64 = call;
         ctx.r4.u64 = game::RacerKeyOf(car);
+        const bool wasStock = game::StockPartsFor(true);   // a pool car stands for a player: the car's stock parts
         __imp__sub_82333680(ctx, base);
+        game::StockPartsFor(wasStock);
         ctx = saved;
         uint32_t owner = 0;
         for (uint32_t v : game::MpWorldVehicles(base))
