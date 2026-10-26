@@ -36,7 +36,7 @@ namespace update
     // Versioning orders them: 0.1.7-hle.1 < 0.1.7-hle.2 < 0.1.8-hle.1. Raise it
     // with each fork release on the same original version; back to "hle.1"
     // on a new one.
-    inline constexpr const char kForkRevision[] = "hle.4";
+    inline constexpr const char kForkRevision[] = "hle.5";
     // The whole exchange, connecting included.
     inline constexpr double kTimeoutSeconds = 10.0;
     // A release's JSON is a few KB (its notes are at most 125,000 characters).
