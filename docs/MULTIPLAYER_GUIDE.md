@@ -53,7 +53,9 @@ the minimap), also during a race. Use it to agree the race: the track, the direc
 ## Limits
 - Other players are listed by name in the standings (during and after the race: up to ten capital letters, digits, space, `-` and `_`), and their names show over their cars (up to 400 m away,
   also through walls). They show on the minimap like the game's own opponents (checked with a stand-in player on one machine).
-- Opponent cars look the same model on every machine, but paint, wheels, spoilers and vinyls are the game's random ones for that car, not the owner's own.
+- Opponent cars look the same model on every machine, with the owner's paint and vinyl (each game sends its car's skin, 4 MB, once a race). Wheels, spoilers and body kits are
+  the game's random ones for that car, not the owner's own. In the open world a player whose car isn't among the six made when the world loads shows as another car, in that
+  car's own paint.
 - Laps and finishing places are the game's own (computed on each machine from where the cars are); the times in the standings can differ between machines.
 - The race comes from the picker's Custom Race selection; the laps and opponents are each player's own settings.
 - Basic protection only: the server and every game drop car states that are not finite or are far outside what a car can do, limit one player to 120 states a second, clean player names, and

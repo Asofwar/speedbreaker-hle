@@ -519,7 +519,7 @@ Tested with real game clients, not bots (protocol 9):
   name over its car. The paint still differs (the red RX-8 was purple on the other machine).
 Still to do on two real machines: the Steam Deck with a PC over Wi-Fi or a VPN.
 
-### Same paint on every machine: what was tried (2026-10-25, not solved)
+### Same paint on every machine: what was tried (2026-10-25; solved by sending the skin, see the next section)
 An opponent or pool car of a given model gets a different paint and livery on each machine and in each run (an RX-8 was green, red-black, silver-blue). The aim was the smaller one:
 the same paint for a player on every machine, by making whatever random choice picks it the same. Probed, with the open world's pool (made through `sub_82333680`) and a race
 replay's opponents:
@@ -568,3 +568,25 @@ So the choice is made elsewhere: by a generator of the game's own with another f
      vertex shader constants (c1/c3 carry it) against the bodies the multiplayer layer knows;
   2. the same paint everywhere without sending it: a write watch on the skin (its address once the car's textures are allocated) names the function that composites it, and
      its inputs (the paint and vinyl chosen) can be fixed per player. (The front end's 408-byte customisation record, +1124 of *0x82A2C684, is null in a Quick Race: it is a career car's, so it says nothing about an opponent.)
+- A gate test before building it (an RX-8 player with an mp_bot RX-8 beside it): copying the player's whole skin (4 MB: the texture is 8_8_8_8, 4 bytes a texel, so the 1 MB
+  of the first try left half the car in the old colour) over the rival's made the rival the player's stock red, still red 30 s later in 3 of 4 runs (once the game put its own
+  back), so it has to be written again when that happens. No CPU write to it was caught by a write watch, so way 2 has nothing to hook.
+
+### The skin over the network (protocol 11, 2026-10-26)
+Way 1, built:
+- The renderer (`gpu::renderer::CarSkins`) records, for the car body shaders' draws (ps 48553c3b, 781d5cda), every 1024x1024 8_8_8_8 texture they sample, with where that draw
+  puts the car in view space (the w of the vertex shader's c5..c7: x right, y up, z ahead) and the frame. Only draws into the widest viewport these shaders have used count:
+  the rear-view mirror draws the cars behind with its own view, and its places matched the wrong cars (a game sent another car's skin as its own before this).
+- The multiplayer layer (`mp_adapter.cpp`, twice a second) puts each car's body (tracker axes: body z, -x, y) through the player camera's view matrix (eView 1 at
+  0x82C3F590 + 384, the matrix at +0x50: rows, the translation in the last) and takes the skin drawn within 3 m of it in x and z in the last 30 frames. Positions agree within
+  about a metre.
+- Its own car's skin goes to the server once (again when its address changes, as in a new race): `Msg::Skin` on a channel of its own (kChanSkin, reliable), 4 MB, with the range
+  coder on. The server keeps each player's and sends them on, also to whoever joins later.
+- A skin from another player is written (through the CPU's view of the memory, so the texture cache loads it again) over the skin of the car that stands for that player, when
+  the texture's format and size words match and three 256-byte samples differ, so again whenever the game has put its own back. Only over a car of the owner's model (another
+  model's skin has another layout): in the open world a pool car made as that car (`game::WorldPoolCar`; a player whose car isn't in the pool drives another model's pool car,
+  which keeps its own paint), in a race an opponent of the roster. Only the base level: the mips' layout isn't known, so a far car may keep its own colours.
+- `NFSMW_MP_SKINS=0` turns it off.
+- Checked with two Windows clients on one machine: in the open world an IS300 player saw the other's RX-8 in its owner's stock red, and with the cars swapped the BMW that stood
+  for an IS300 (not in the pool) was left alone; in a Custom Race (RX-8 against Supra) each saw the other's car in its owner's colours (red RX-8, black Supra). Spoilers and
+  body kits are parts, not the skin: they stay the game's own.

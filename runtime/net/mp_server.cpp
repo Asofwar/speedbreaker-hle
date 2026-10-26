@@ -32,6 +32,7 @@ namespace mp
             uint64_t carKey = 0;
             bool ready = false;
             uint32_t raceKey = 0;   // the race its game has selected
+            std::vector<uint8_t> skinMessage;   // its Skin as the others get it (id first), sent to whoever joins later
         };
         ENetHost* host = nullptr;
         uint16_t port = 0;
@@ -207,6 +208,9 @@ namespace mp
                         Send(peer, kChanEvent, inf, true);
                     }
                 }
+                for (auto& [oid, op] : players)   // and their cars' skins
+                    if (!op.skinMessage.empty())
+                        enet_peer_send(peer, kChanSkin, enet_packet_create(op.skinMessage.data(), op.skinMessage.size(), ENET_PACKET_FLAG_RELIABLE));
                 Writer j(Msg::PlayerJoin); j.u8(id); j.str(name);
                 Broadcast(kChanEvent, j, true);
                 players[id] = np;
@@ -259,6 +263,16 @@ namespace mp
             {
                 if (held.erase(pl->id))
                     SendBarrier();
+            }
+            else if (t == Msg::Skin)
+            {
+                SkinData s;
+                if (!r.skin(s))
+                    return;
+                Writer w(Msg::Skin); w.u8(pl->id); w.skin(s);
+                pl->skinMessage = w.b;
+                Broadcast(kChanSkin, w, true, pl->id);
+                fprintf(stderr, "[mp-server] %s's car skin: %zu KB, sent on\n", pl->name.c_str(), s.bytes.size() / 1024);
             }
             else if (t == Msg::Chat)
             {
@@ -326,6 +340,8 @@ namespace mp
         a.host = ENET_HOST_ANY;
         a.port = port;
         m->host = enet_host_create(&a, size_t(maxPlayers) + 4, kChannels, 0, 0);
+        if (m->host)
+            enet_host_compress_with_range_coder(m->host);
         m->port = port;
         m->nextTick = NowMs();
         return m->host != nullptr;

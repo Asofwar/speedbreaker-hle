@@ -111,6 +111,20 @@ namespace gpu::renderer
     // thread.
     bool SceneAntiAliased();
 
+    // A car's skin, its paint and vinyl (docs/MULTIPLAYER.md, "Same paint"): a 1024x1024 8_8_8_8 texture the car body shaders sample, as a recent draw used
+    // it. view is the car's place in view space as that draw's vertex shader had it (the w of c5..c7: x right, y up, z ahead); the multiplayer layer matches
+    // it to the cars it knows (game/mp_adapter.cpp). Any thread.
+    struct CarSkin
+    {
+        uint32_t address = 0;      // guest physical
+        uint32_t fetch1 = 0, fetch2 = 0;  // the texture fetch's address/format and size words
+        uint32_t mipAddress = 0;   // 0: no mips
+        float view[3] = {};
+        uint64_t frame = 0;        // when it was last drawn
+    };
+    std::vector<CarSkin> CarSkins();
+    uint64_t Frame();
+
     // After each swap (NFSMW_PASS_PROFILE=<frame> prints that frame's passes).
     void OnSwap(uint64_t frame);
 

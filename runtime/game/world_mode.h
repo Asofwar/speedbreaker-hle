@@ -9,4 +9,6 @@ namespace game
     // is shown. Returns the vehicle's owner object (for the multiplayer layer's body hook), or 0 when the pool has none free. A car that is not in the pool gets any free one.
     uint32_t WorldPoolAcquire(const std::string& car);
     void WorldPoolRelease(uint32_t owner);
+    // The car a pool vehicle was made as ("" if it isn't one): a player whose car is not in the pool gets another car's vehicle.
+    std::string WorldPoolCar(uint32_t owner);
 }

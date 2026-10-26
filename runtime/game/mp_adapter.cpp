@@ -18,6 +18,7 @@
 #include "mp_hud.h"
 #include "world_mode.h"
 #include "ultrawide.h"
+#include <gpu/renderer.h>
 #include <algorithm>
 #include <cstring>
 #include <hid/input.h>
@@ -52,6 +53,7 @@ namespace
 
     // The front end's player record (*kFeRecord) and the selected race's key in it (Quick Race > Custom).
     constexpr uint32_t kFeRecord = 0x82A2C684, kFeRaceKey = 0x34;
+    constexpr uint32_t kPlayerView = 0x82C3F590 + 384;   // the player camera's eView (view 1: +0x50 its view matrix)
 
     constexpr const char* kWaitToast = "Waiting for the other players. Press B to start without them.";
     std::mutex g_statusMutex;
@@ -201,6 +203,8 @@ namespace
         std::unique_ptr<mp::Client> net;
         std::string server, name = "player";
         double lastSend = 0, lastTry = 0, lastStatus = -10;
+        double lastSkins = 0;
+        uint32_t sentSkinAt = 0;   // the address of the skin this game sent last (a new one, a new race: sent again)
         // Start barrier (NFSMW_MP_PLAYERS=n, n > 1): the race is held, world frozen, from the moment it appears until n-1 other players are there and ready too.
         double lastHud = 0;
         bool world = mpcfg::Load().world;   // open-world mode: the others are vehicles made in the world, no race start barrier
@@ -803,6 +807,107 @@ namespace
         }
         if (!a.localObj)
             return;
+
+        // The cars' skins, their paint and vinyl (docs/MULTIPLAYER.md, "Same paint"): an opponent or pool car of a player's model comes with the game's random
+        // paint on every machine. Twice a second the skins the renderer saw drawn (gpu::renderer::CarSkins: where each draw put its car, in view space) are matched
+        // to the cars by putting their bodies through the player camera's view matrix; this game's own car's skin goes to the server once (it keeps it for the
+        // others), and a skin another player sent is written over the skin of the car that stands for that player, the same model's same texture (format and
+        // size checked), again whenever the game has put its own back. NFSMW_MP_SKINS=0: off.
+        static const bool skinsOn = [] { const char* v = std::getenv("NFSMW_MP_SKINS"); return !(v && v[0] == '0'); }();
+        if (!a.net->Connected())
+            a.sentSkinAt = 0;   // (a new connection: the server has nothing of this game's)
+        if (skinsOn && a.net->Connected() && now - a.lastSkins >= 0.5)
+        {
+            a.lastSkins = now;
+            const std::vector<gpu::renderer::CarSkin> skins = gpu::renderer::CarSkins();
+            const uint64_t frame = gpu::renderer::Frame();
+            float view[16];
+            for (int k = 0; k < 16; ++k)
+                view[k] = LoadF(base, kPlayerView + 0x50 + 4 * k);   // (rows; the translation in the last)
+            auto skinOf = [&](uint32_t obj) -> const gpu::renderer::CarSkin* {
+                const uint32_t pb = PhysBody(base, obj);
+                if (!pb)
+                    return nullptr;
+                const Phys ph = ReadPhys(base, pb);
+                const float t[3] = { ph.pos[2], -ph.pos[0], ph.pos[1] };   // tracker axes, as the view matrix takes them
+                float v[3];
+                for (int i = 0; i < 3; ++i)
+                    v[i] = t[0] * view[i] + t[1] * view[4 + i] + t[2] * view[8 + i] + view[12 + i];
+                const gpu::renderer::CarSkin* best = nullptr;
+                float bestD = 3.f * 3.f;   // (the draw's origin is the model's, a metre or so from the body's)
+                for (const auto& s : skins)
+                {
+                    if (s.frame + 30 < frame)
+                        continue;   // (not drawn in the last half second: the view has moved on)
+                    const float dx = s.view[0] - v[0], dz = s.view[2] - v[2];
+                    if (dx * dx + dz * dz < bestD)
+                    {
+                        bestD = dx * dx + dz * dz;
+                        best = &s;
+                    }
+                }
+                return best;
+            };
+            auto bytesOf = [](const gpu::renderer::CarSkin& s, uint32_t& base_, uint32_t& mips) {
+                base_ = 1024 * 1024 * 4;   // (8_8_8_8, the 1024x1024 tiles exactly)
+                mips = 0;   // (the base level only: the mips' packed layout isn't known, so they are never written; a far car may keep its own colours)
+                (void)s;
+            };
+            auto guest = [&](uint32_t physical) { return base + 0xA0000000u + physical; };   // (the CPU's view: the write watch sees the stores)
+            if (const auto* own = skinOf(a.localObj); own && own->address != a.sentSkinAt)
+            {
+                mp::SkinData d;
+                d.fetch1 = own->fetch1;
+                d.fetch2 = own->fetch2;
+                bytesOf(*own, d.baseBytes, d.mipBytes);
+                d.bytes.resize(size_t(d.baseBytes) + d.mipBytes);
+                memcpy(d.bytes.data(), guest(own->address), d.baseBytes);
+                if (d.mipBytes)
+                    memcpy(d.bytes.data() + d.baseBytes, guest(own->mipAddress), d.mipBytes);
+                a.net->SendSkin(d);
+                a.sentSkinAt = own->address;
+                fprintf(stderr, "[mp] this car's skin (%08X, %zu KB) sent to the server\n", own->address, d.bytes.size() / 1024);
+            }
+            for (const auto& [id, obj] : a.standIns)
+            {
+                const auto it = a.net->Remotes().find(id);
+                if (it == a.net->Remotes().end() || !it->second.skin)
+                    continue;
+                const mp::SkinData& d = *it->second.skin;
+                // Only over a car of the owner's model (another model's skin has another layout): in the open world a pool car made as that car, in a race one of the
+                // roster's (whose opponents were made as the players' cars; a player that came later drives whatever opponent was left).
+                if (a.world)
+                {
+                    std::string want;
+                    for (const auto& c : game::CarCatalog())
+                        if (c.key == it->second.carKey)
+                            want = c.name;
+                    for (char& ch : want)
+                        if (ch >= 'A' && ch <= 'Z') ch = char(ch + 32);
+                    if (want.empty() || game::WorldPoolCar(obj) != want)
+                        continue;
+                }
+                else if (std::find(a.roster.begin(), a.roster.end(), id) == a.roster.end())
+                    continue;
+                const auto* s = skinOf(obj);
+                if (!s)
+                    continue;
+                uint32_t baseBytes, mips;
+                bytesOf(*s, baseBytes, mips);
+                if ((s->fetch1 & 0x3F) != (d.fetch1 & 0x3F) || s->fetch2 != d.fetch2 || baseBytes != d.baseBytes || mips != d.mipBytes)
+                    continue;   // (another model or texture: never written over)
+                // Already the owner's? (Three samples of it.)
+                bool same = true;
+                for (uint32_t at : { 0u, d.baseBytes / 2, d.baseBytes - 256 })
+                    same = same && memcmp(guest(s->address) + at, d.bytes.data() + at, 256) == 0;
+                if (same)
+                    continue;
+                memcpy(guest(s->address), d.bytes.data(), d.baseBytes);
+                if (d.mipBytes)
+                    memcpy(guest(s->mipAddress), d.bytes.data() + d.baseBytes, d.mipBytes);
+                fprintf(stderr, "[mp] player %u's car skin written over %08X (%zu KB)\n", unsigned(id), s->address, d.bytes.size() / 1024);
+            }
+        }
 
         // The local car, 30 times a second, with the ready flag while the start is held.
         if (a.net->Connected() && now - a.lastSend >= 1.0 / 30.0)

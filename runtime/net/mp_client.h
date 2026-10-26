@@ -19,6 +19,7 @@ namespace mp
         uint64_t carKey = 0;   // the car it chose in the lobby (type key, 0: none yet)
         bool lobbyReady = false;   // it is ready to race (its game makes cars for the ones who are)
         uint32_t raceKey = 0;      // the race its game has selected in the front end (0: none)
+        std::shared_ptr<const SkinData> skin;   // its car's skin as its game sent it (null: none yet)
     };
 
     class Client
@@ -35,6 +36,8 @@ namespace mp
         uint8_t MyId() const;
         void SendCar(const CarState& c);   // unreliable; call at the send rate (about 30 Hz)
         void SendChat(const std::string& text);
+        // My car's skin, to the server (which keeps it for the others, also those who join later).
+        void SendSkin(const SkinData& skin);
         // Tell everyone which car this player chose in the lobby (the game's car type key, 0: none) and whether it is ready to race.
         void SetLobby(uint64_t carKey, bool ready, uint32_t raceKey = 0);
         uint64_t MyCarKey() const;

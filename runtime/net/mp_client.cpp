@@ -119,6 +119,8 @@ namespace mp
     {
         if (enet_initialize() != 0) return false;
         m->host = enet_host_create(nullptr, 1, kChannels, 0, 0);
+        if (m->host)
+            enet_host_compress_with_range_coder(m->host);   // (the skins: megabytes; the server compresses too)
         ENetAddress a{};
         if (!m->host || enet_address_set_host(&a, hostName.c_str()) != 0) return false;
         a.port = port;
@@ -300,6 +302,14 @@ namespace mp
                     }
                     break;
                 }
+                case Msg::Skin:
+                {
+                    const uint8_t id = r.u8();
+                    auto skin = std::make_shared<SkinData>();
+                    if (r.ok() && id != m->myId && r.skin(*skin))
+                        m->remotes[id].skin = std::move(skin);
+                    break;
+                }
                 case Msg::Records:
                 {
                     std::vector<RaceRecord> rs;
@@ -406,6 +416,15 @@ namespace mp
         return true;
     }
     uint64_t Client::MyCarKey() const { return m->myCarKey; }
+
+    void Client::SendSkin(const SkinData& skin)
+    {
+        if (!m->welcome || skin.bytes.size() > kMaxSkinBytes)
+            return;
+        Writer w(Msg::Skin);
+        w.skin(skin);
+        m->Send(kChanSkin, w, true);
+    }
 
     void Client::SendChat(const std::string& text)
     {

@@ -11,13 +11,15 @@
 namespace mp
 {
     constexpr uint16_t kDefaultPort = 27960;
-    constexpr uint32_t kProtocolVersion = 10;
+    constexpr uint32_t kProtocolVersion = 11;
     constexpr size_t kMaxChat = 160;        // a chat line's characters (Writer::text)
     constexpr uint8_t kServerId = 0xFF;     // Chat's sender id for the server's own lines (its console)
     constexpr int kMaxPlayers = 16;
     constexpr int kChanState = 0;   // unreliable, latest wins
     constexpr int kChanEvent = 1;   // reliable, ordered
-    constexpr int kChannels = 2;
+    constexpr int kChanSkin = 2;    // reliable, ordered: the cars' skins (megabytes), apart so they never hold up the events
+    constexpr int kChannels = 3;
+    constexpr size_t kMaxSkinBytes = 8u << 20;
 
     enum class Msg : uint8_t
     {
@@ -38,6 +40,7 @@ namespace mp
         RaceState,      // S->C reliable, at most 5 a second: the race in progress: race index (255 none), phase, time (ms), racers (id, lap, next point, place, finish time)
         Go,             // S->C reliable: the server released the start: the slowest world clock (f32), and in how many ms (from receipt, round trip allowed for) that clock's game starts (u32)
         Records,        // S->C reliable, after RaceList and on every new record: count (the races'), then per race its best time (u32 ms, 0 none) and who drove it (str)
+        Skin,           // C->S reliable (kChanSkin): my car's skin: SkinData; S->C: id, SkinData (each player's, also to whoever joins later)
     };
 
     constexpr uint16_t kFlagReady = 0x10;   // CarState::flags: this game is held at the start barrier and ready to go
@@ -84,6 +87,15 @@ namespace mp
         return out.empty() ? std::string("player") : out;
     }
 
+    // A car's skin (its paint and vinyl texture, gpu/renderer.h's CarSkin) as its owner's game has it: the texture fetch's format and size words, then the
+    // texture's bytes (bytes: base, then mips).
+    struct SkinData
+    {
+        uint32_t fetch1 = 0, fetch2 = 0;
+        uint32_t baseBytes = 0, mipBytes = 0;
+        std::vector<uint8_t> bytes;
+    };
+
     // Writer/reader over a byte vector.
     class Writer
     {
@@ -104,6 +116,12 @@ namespace mp
             const size_t n = std::min<size_t>({ s.size(), max, 255 });
             u8(uint8_t(n));
             b.insert(b.end(), s.begin(), s.begin() + n);
+        }
+        void raw(const uint8_t* p, size_t n) { b.insert(b.end(), p, p + n); }
+        void skin(const SkinData& s)
+        {
+            u32(s.fetch1); u32(s.fetch2); u32(s.baseBytes); u32(s.mipBytes);
+            raw(s.bytes.data(), s.bytes.size());
         }
         void car(const CarState& c)
         {
@@ -137,6 +155,17 @@ namespace mp
             std::string s((const char*)d_ + p_, l);
             p_ += l;
             return s;
+        }
+        // A skin (the rest of the message): false if it doesn't add up.
+        bool skin(SkinData& s)
+        {
+            s.fetch1 = u32(); s.fetch2 = u32(); s.baseBytes = u32(); s.mipBytes = u32();
+            const size_t n = size_t(s.baseBytes) + s.mipBytes;
+            if (bad_ || n > kMaxSkinBytes || n != n_ - p_)
+                return false;
+            s.bytes.assign(d_ + p_, d_ + n_);
+            p_ = n_;
+            return true;
         }
         CarState car()
         {

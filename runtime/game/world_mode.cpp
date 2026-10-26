@@ -68,6 +68,13 @@ namespace game
         if (any) { any->free = false; return any->owner; }
         return 0;
     }
+    std::string WorldPoolCar(uint32_t owner)
+    {
+        for (const PoolCar& p : g_pool)
+            if (p.owner == owner)
+                return p.name;
+        return {};
+    }
     void WorldPoolRelease(uint32_t owner)
     {
         for (PoolCar& p : g_pool)

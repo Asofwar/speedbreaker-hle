@@ -9273,6 +9273,9 @@ void main()
         RenderTarget* s_aaSource = nullptr;
         std::atomic<uint64_t> s_sceneAaFrame{ 0 };  // s_frame + 1 at the last one
         std::atomic<uint64_t> s_swapFrame{ 0 };     // s_frame for other threads (SceneAntiAliased)
+        // CarSkins: the car skins drawn lately, by address.
+        std::mutex s_skinMutex;
+        std::map<uint32_t, CarSkin> s_skins;
         // Its output, of its own: the post scratch is resized by the motion blur
         // and the occlusion to their region, which would free it under this
         // pass's recorded work. Made at the first size and freed only by
@@ -14553,6 +14556,31 @@ void main()
                 float(scaleY), barPlan);
         // NFSMW_LOG_DRAWS=<seconds>: every draw of one frame (target, viewport,
         // scissor, textures, shaders), consecutive duplicates folded.
+        // Car skins for the multiplayer layer (CarSkins): the 1024x1024 8_8_8_8 textures of the car body shaders, with where the draw puts the car.
+        // Only the main view's draws: the rear-view mirror draws the cars behind into a small viewport with its own view, where their places would match the
+        // wrong cars (the widest viewport the car shaders have drawn into is the main one).
+        static float s_skinViewport = 0;
+        const float skinViewport = std::fabs(RegF(XE_GPU_REG_PA_CL_VPORT_XSCALE));
+        if (const uint32_t ps = uint32_t(s_ps->hash >> 32); ps == 0x48553c3b || ps == 0x781d5cda)
+            s_skinViewport = std::max(s_skinViewport, skinViewport);
+        if (const uint32_t ps = uint32_t(s_ps->hash >> 32); (ps == 0x48553c3b || ps == 0x781d5cda) && skinViewport >= 0.75f * s_skinViewport)
+            for (uint32_t n = 0; n < 32; n++)
+                if (s_ps->info.texture2DMask & (1u << n))
+                {
+                    const uint32_t* f = &s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + n * 6];
+                    if ((f[1] & 0x3F) != 6 || (f[2] & 0x1FFF) != 1023 || ((f[2] >> 13) & 0x1FFF) != 1023)
+                        continue;
+                    CarSkin k;
+                    k.address = f[1] & 0x1FFFF000u;
+                    k.fetch1 = f[1];
+                    k.fetch2 = f[2];
+                    k.mipAddress = f[5] & 0x1FFFF000u;
+                    for (uint32_t c = 0; c < 3; c++)
+                        memcpy(&k.view[c], &s_regs[XE_GPU_REG_SHADER_CONSTANT_000_X + (5 + c) * 4 + 3], 4);
+                    k.frame = s_frame;
+                    std::lock_guard lock(s_skinMutex);
+                    s_skins[k.address] = k;
+                }
         if (s_logDrawsNow)
         {
             std::string line = std::format("{}x{} vp s({:.1f},{:.1f}) o({:.1f},{:.1f}) sc({},{})-({},{}) vte{:03X} vs_{:016x} ps_{:016x} tex",
@@ -15677,6 +15705,25 @@ void main()
     void ReadBackFrontImage(FrontPixels done)
     {
         ReadBackImage(s_lastFront, std::move(done));
+    }
+
+    std::vector<CarSkin> CarSkins()
+    {
+        std::lock_guard lock(s_skinMutex);
+        std::vector<CarSkin> out;
+        for (auto it = s_skins.begin(); it != s_skins.end();)
+        {
+            if (s_frame > it->second.frame + 600)   // (not drawn for ten seconds: its memory may be another texture's by now)
+                it = s_skins.erase(it);
+            else
+                out.push_back((it++)->second);
+        }
+        return out;
+    }
+
+    uint64_t Frame()
+    {
+        return s_swapFrame.load(std::memory_order_relaxed);
     }
 
     bool SceneAntiAliased()
