@@ -1,7 +1,10 @@
 // SpeedBreaker. GPL-3.0-or-later (see COPYING).
 package dev.asofwar.speedbreaker;
 
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.util.Log;
@@ -47,6 +50,20 @@ public class SpeedBreakerActivity extends SDLActivity {
             }
         }
         super.onCreate(savedInstanceState);
+    }
+
+    // The name the player knows a document by that the system's file picker gave
+    // the installer (a content:// URI: the disc image), as its provider shows it;
+    // null if it gives none. Called from native code (platform/android_files.cpp).
+    public static String documentName(String uri) {
+        try (Cursor c = getContext().getContentResolver().query(Uri.parse(uri),
+                new String[] { OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0))
+                return c.getString(0);
+        } catch (Exception e) {
+            Log.w("SpeedBreaker", "documentName: " + e);
+        }
+        return null;
     }
 
     @Override

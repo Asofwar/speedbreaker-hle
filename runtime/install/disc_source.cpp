@@ -36,6 +36,9 @@
 #endif
 
 #include <platform/file_io.h>
+#ifdef __ANDROID__
+#include <platform/android_files.h>
+#endif
 
 namespace install
 {
@@ -97,8 +100,23 @@ namespace install
             return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | uint32_t(p[3]);
         }
 
+        // A path for messages, as it is; a picked document (Android) by its
+        // name, as its URI says nothing to the player.
+        std::string ShownPath(const fs::path& path)
+        {
+#ifdef __ANDROID__
+            if (platform::android::IsDocument(path))
+                return platform::android::DocumentName(path);
+#endif
+            return path.string();
+        }
+
         std::string DisplayName(const fs::path& path)
         {
+#ifdef __ANDROID__
+            if (platform::android::IsDocument(path))
+                return platform::android::DocumentName(path);
+#endif
             std::string name = path.filename().string();
             return name.empty() ? path.string() : name;
         }
@@ -402,10 +420,10 @@ namespace install
             auto image = std::make_shared<ImageFile>();
             image->fd = platform::OpenFile(path, kReadOnce);
             if (image->fd < 0)
-                return Fail(Error::NotFound, std::format("Cannot open {}: {}.", path.string(), strerror(errno)), path.string());
+                return Fail(Error::NotFound, std::format("Cannot open {}: {}.", ShownPath(path), strerror(errno)), path.string());
             platform::FileInfo st;
             if (platform::InfoOf(image->fd, st) != 0)
-                return Fail(Error::ReadError, std::format("Cannot read {}: {}.", path.string(), strerror(errno)), path.string());
+                return Fail(Error::ReadError, std::format("Cannot read {}: {}.", ShownPath(path), strerror(errno)), path.string());
             image->size = st.size;
             AdviseSequential(image->fd);
 
@@ -647,6 +665,12 @@ namespace install
     Result OpenDiscSource(const std::filesystem::path& path, std::unique_ptr<DiscSource>& source, const OpenOptions& options)
     {
         source.reset();
+#ifdef __ANDROID__
+        // A disc image picked in the system's file picker (a content:// URI,
+        // platform/android_files.h): a file, with no path to look at.
+        if (platform::android::IsDocument(path))
+            return OpenImage(path, source, options);
+#endif
         std::error_code ec;
         fs::file_status status = fs::status(path, ec);
         if (status.type() == fs::file_type::not_found)

@@ -74,9 +74,9 @@ it has run on one phone, with a Snapdragon 8 Elite Gen 5 (Adreno 840). On Adreno
 Turnip driver, packaged in the app, because Qualcomm's own driver hangs on some of the game's
 shaders; phones with other GPUs haven't been tried. You drive with the touch controls
 (Settings > Touch: steering buttons, tilt or a stick, and Edit Layout to move them) or a
-gamepad. The installer can't read a disc image on the phone yet: install the game on a PC with
-SpeedBreaker, then copy what is in its `game` folder into
-`Android/data/dev.asofwar.speedbreaker/files/game/files` on the phone.
+gamepad. On first start the installer asks for your disc image: Browse for image... opens the
+phone's file picker, and the `.iso` is read where it is (Downloads, an SD card, a USB drive),
+not copied first.
 
 More picture settings, all off or at the game's own values unless you change them:
 - Display: Contrast, Saturation, Color Temperature, Remove Orange Tint, Modern Look, Rich Blacks.
@@ -125,9 +125,9 @@ section is the original README.
 работает через драйвер Turnip из Mesa, он лежит в самом приложении: родной драйвер Qualcomm
 зависает на части шейдеров игры. На телефонах с другими GPU не пробовалась. Управление —
 сенсорные кнопки (Settings > Touch: руль кнопками, наклоном или стиком, Edit Layout, чтобы их
-передвинуть) или геймпад. Установщик пока не умеет читать образ диска на телефоне: поставьте
-игру на ПК через SpeedBreaker и скопируйте содержимое её папки `game` в
-`Android/data/dev.asofwar.speedbreaker/files/game/files` на телефоне.
+передвинуть) или геймпад. При первом запуске установщик попросит образ диска: Browse for image...
+открывает системный выбор файлов, и `.iso` читается прямо там, где лежит (Загрузки, SD-карта,
+флешка), без копирования.
 
 Больше настроек картинки. Пока их не трогать, всё выключено или стоит как в игре:
 - Display: контраст, насыщенность, цветовая температура, снятие оранжевого фильтра, Modern Look, глубокие тени.

@@ -1,6 +1,9 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING). See platform/file_io.h.
 // macOS, iOS and Linux: the POSIX calls the runtime always made.
 #include <platform/file_io.h>
+#ifdef __ANDROID__
+#include <platform/android_files.h>
+#endif
 
 #include <cerrno>
 
@@ -33,6 +36,17 @@ namespace platform
 
     int OpenFile(const std::filesystem::path& path, int flags, int mode)
     {
+#ifdef __ANDROID__
+        // A disc image picked in the system's file picker: a content:// URI,
+        // opened through its provider (platform/android_files.h), to read.
+        if (android::IsDocument(path))
+        {
+            if ((flags & O_ACCMODE) == O_RDONLY)
+                return android::OpenDocument(path);
+            errno = EACCES;
+            return -1;
+        }
+#endif
         return open(path.c_str(), flags, mode);
     }
 

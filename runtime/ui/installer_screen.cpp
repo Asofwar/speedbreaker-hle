@@ -30,6 +30,8 @@
 #include <platform/ios_files.h>
 #elif defined(__APPLE__)
 #include <platform/file_dialog.h>
+#elif defined(__ANDROID__)
+#include <platform/android_files.h>
 #endif
 
 namespace ui
@@ -186,6 +188,11 @@ namespace ui
 
         std::string FileName(const std::filesystem::path& path)
         {
+#ifdef __ANDROID__
+            // A disc image picked in the system's file picker: a content:// URI.
+            if (platform::android::IsDocument(path))
+                return platform::android::DocumentName(path);
+#endif
             std::string name = path.filename().string();
             return name.empty() ? path.string() : name;
         }
@@ -206,6 +213,10 @@ namespace ui
         // The home folder as ~.
         std::string HomeRelative(const std::filesystem::path& path)
         {
+#ifdef __ANDROID__
+            if (platform::android::IsDocument(path))
+                return platform::android::DocumentName(path);
+#endif
             std::string text = path.string();
             if (const char* home = std::getenv("HOME"); home && *home)
             {
@@ -289,6 +300,11 @@ namespace ui
                                   "another app's folder), or copy it into SpeedBreaker's folder in the Files app (On My "
                                   "iPad or On My iPhone > SpeedBreaker) and choose Rescan.";
         const char* kScanning = "Looking for disc images in SpeedBreaker's folder...";
+#elif defined(__ANDROID__)
+        // HOME is the app's folder in shared storage (main.cpp, UseAndroidFolders).
+        const char* kWhereToPut = "Choose Browse for image... to pick your .iso where it is (Downloads, an SD card, a USB "
+                                  "drive), or copy it into Android/data/dev.asofwar.speedbreaker/files and choose Rescan.";
+        const char* kScanning = "Looking for disc images in SpeedBreaker's folder...";
 #elif defined(__APPLE__)
         const char* kWhereToPut = "Put your .iso file in a Games folder in your home folder and choose Rescan, or browse for it.";
         const char* kScanning = "Looking for disc images in ~/Games...";
@@ -308,6 +324,9 @@ namespace ui
 #elif defined(_WIN32)
         const char* kNoDialog = "The file browser couldn't be opened. Put the .iso in Downloads, Desktop or Documents and "
                                 "choose Rescan, or type its path below.";
+#elif defined(__ANDROID__)
+        const char* kNoDialog = "The file picker couldn't be shown. Copy your .iso into "
+                                "Android/data/dev.asofwar.speedbreaker/files and choose Rescan.";
 #else
         const char* kNoDialog = "The file browser isn't available here (in Game Mode, for example). Put the .iso in Downloads, "
                                 "a Games folder or on an SD card and choose Rescan, or type its path below (Steam + X shows "
@@ -574,7 +593,9 @@ namespace ui
                 destinations.push_back(std::move(d));
             }
             std::optional<std::filesystem::path> recorded = install::RecordedInstallPath();
-#if !(defined(__APPLE__) && TARGET_OS_IOS)
+            // Not on iOS, nor on Android (SDL has no folder picker there): the
+            // game stays in the app's own storage.
+#if !(defined(__APPLE__) && TARGET_OS_IOS) && !defined(__ANDROID__)
             // A folder chosen last time (not internal storage or a drive's
             // own folder) comes back as the chosen folder, as it is. The same
             // folder however it was spelled (`--dest dir/`, or through a link).
@@ -1149,9 +1170,11 @@ namespace ui
             // otherwise lock them for good. A new Browse replaces it.)
             if (mainButton("Browse for image...") && !inert)
                 Browse(false);
+#ifndef __ANDROID__  // (SDL has no folder picker there)
             ImGui::SameLine();
             if (ImGui::Button("Browse for folder...") && !inert)
                 Browse(true);
+#endif
             ImGui::SameLine();
             ImGui::BeginDisabled(!st.scanned);
             if (ImGui::Button("Rescan") && !inert)

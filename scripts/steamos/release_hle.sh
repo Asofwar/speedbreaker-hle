@@ -150,9 +150,9 @@ prev="$(git describe --tags --abbrev=0 --match 'v*-hle*' HEAD^ 2>/dev/null || ec
         echo
     fi
     if [ -n "$ANDROID_APK" ]; then
-        echo "Android (a test build: Android 13 or newer, arm64; so far run on one Snapdragon 8 Elite Gen 5 phone): install \`SpeedBreaker-android-arm64.apk\`. The installer can't read a disc image on the phone yet: install the game on a PC first and copy what is in its \`game\` folder into \`Android/data/dev.asofwar.speedbreaker/files/game/files\` on the phone. Touch controls are in Settings > Touch; a gamepad works too."
+        echo "Android (a test build: Android 13 or newer, arm64; so far run on one Snapdragon 8 Elite Gen 5 phone): install \`SpeedBreaker-android-arm64.apk\`; on first start the installer asks for your disc image (Browse for image... opens the phone's file picker; the .iso is read where it is). Touch controls are in Settings > Touch; a gamepad works too."
         echo
-        echo "Android (тестовая сборка: Android 13 и новее, arm64; пока проверена на одном телефоне со Snapdragon 8 Elite Gen 5): установите \`SpeedBreaker-android-arm64.apk\`. Установщик пока не читает образ диска на телефоне: поставьте игру на ПК и скопируйте содержимое её папки \`game\` в \`Android/data/dev.asofwar.speedbreaker/files/game/files\` на телефоне. Сенсорное управление настраивается в Settings > Touch, геймпад тоже работает."
+        echo "Android (тестовая сборка: Android 13 и новее, arm64; пока проверена на одном телефоне со Snapdragon 8 Elite Gen 5): установите \`SpeedBreaker-android-arm64.apk\`; при первом запуске установщик попросит образ диска (Browse for image... открывает системный выбор файлов, .iso читается прямо там, где лежит). Сенсорное управление настраивается в Settings > Touch, геймпад тоже работает."
         echo
     fi
     echo "Changes since $prev:"
