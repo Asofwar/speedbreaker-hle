@@ -62,8 +62,19 @@ int main()
         // Auto Gas: no gas pedal; nitrous takes its place.
         const Layout a = Build(Mode::Driving, Steering::Buttons, true, 1280, 720, 1.0f);
         CHECK(Find(a, Kind::Gas) < 0 && Find(a, Kind::Button, button::B) >= 0, "auto gas: nitrous for the gas pedal");
-        // Tilt: nothing to steer with on the screen; Stick: the stick.
-        CHECK(Find(Build(Mode::Driving, Steering::Tilt, false, 1280, 720, 1.0f), Kind::SteerLeft) < 0, "tilt: no steering buttons");
+        // Tilt: nothing to steer with on the screen, the brake and the handbrake for the
+        // left thumb, the gas and nitrous for the right; Stick: the stick.
+        for (bool autoGas : { false, true })
+        {
+            const Layout t = Build(Mode::Driving, Steering::Tilt, autoGas, 1280, 720, 1.0f);
+            CHECK(Find(t, Kind::SteerLeft) < 0, "tilt: no steering buttons");
+            CHECK(Find(t, Kind::Brake) >= 0 && t.widgets[size_t(Find(t, Kind::Brake))].x < 640 &&
+                  t.widgets[size_t(Find(t, Kind::Button, button::A))].x < 640, "tilt: the brakes at the left");
+            CHECK(Find(t, Kind::Button, button::B) >= 0 && t.widgets[size_t(Find(t, Kind::Button, button::B))].x > 640 &&
+                  t.widgets[size_t(Find(t, Kind::Button, button::X))].x > 640, "tilt: nitrous and Speedbreaker at the right");
+            if (!autoGas)
+                CHECK(t.widgets[size_t(Find(t, Kind::Gas))].x > 640, "tilt: the gas at the right");
+        }
         CHECK(Find(Build(Mode::Driving, Steering::Stick, false, 1280, 720, 1.0f), Kind::Stick) >= 0, "stick: the stick");
     }
     // The menus: the D-pad, A B X Y, LB RB LT RT, Start and Back.
@@ -96,17 +107,19 @@ int main()
         const Layout plain = Build(Mode::Driving, Steering::Buttons, false, 1280, 720, 1.0f);
         const Widget& gas = plain.widgets[size_t(Find(plain, Kind::Gas))];
         Placements p;
-        p[Key(Mode::Driving, gas)] = Point{ 0.5f, 0.5f };
+        p[Key(Mode::Driving, Steering::Buttons, gas)] = Point{ 0.5f, 0.5f };
         p["menus button 1000"] = Point{ 0.1f, 0.1f };
         const Layout moved = Build(Mode::Driving, Steering::Buttons, false, 1280, 720, 1.0f, &p);
         const Widget& g = moved.widgets[size_t(Find(moved, Kind::Gas))];
         CHECK(g.x == 640.0f && g.y == 360.0f, "the gas pedal moved: %g %g", g.x, g.y);
         CHECK(moved.widgets.size() == plain.widgets.size(), "the same controls");
-        p[Key(Mode::Driving, gas)] = Point{ 1.0f, 1.0f };
+        p[Key(Mode::Driving, Steering::Buttons, gas)] = Point{ 1.0f, 1.0f };
         const Layout edge = Build(Mode::Driving, Steering::Buttons, false, 1280, 720, 1.0f, &p);
         const Widget& e = edge.widgets[size_t(Find(edge, Kind::Gas))];
         CHECK(e.x + e.r <= 1280.0f && e.y + e.r <= 720.0f, "kept inside the window");
-        CHECK(Key(Mode::Menu, Widget{ Kind::Button, button::A }) == "menus button 1000" && Key(Mode::Driving, gas) == "driving gas", "keys");
+        CHECK(Key(Mode::Menu, Steering::Buttons, Widget{ Kind::Button, button::A }) == "menus button 1000" &&
+              Key(Mode::Driving, Steering::Buttons, gas) == "driving gas" && Key(Mode::Driving, Steering::Stick, gas) == "driving gas" &&
+              Key(Mode::Driving, Steering::Tilt, gas) == "tilt gas", "keys");
         const Placements back = ParsePlacements(FormatPlacements(p) + "junk\nmenus button 2000 5 5\n");
         CHECK(back.size() == 2 && back.at("driving gas").x == 1.0f && std::fabs(back.at("menus button 1000").y - 0.1f) < 1e-4f,
             "the file round trip, junk and out-of-range places skipped (%zu)", back.size());
@@ -114,13 +127,14 @@ int main()
         CHECK(bar.size() == 3 && Grab(bar, bar[2].x, bar[2].y) == 2 && Grab(bar, 0, 700) == -1, "the edit bar");
     }
 
-    // Sliding: the steering buttons with each other, the pedals, the D-pad; nothing else.
+    // Sliding: the steering buttons with each other, the pedals and nitrous, the D-pad; nothing else.
     {
         CHECK(SlideGroup(Kind::SteerLeft, 0) == SlideGroup(Kind::SteerRight, 0) && SlideGroup(Kind::SteerLeft, 0) != 0, "steering");
-        CHECK(SlideGroup(Kind::Gas, 0) == SlideGroup(Kind::Brake, 0) && SlideGroup(Kind::Gas, 0) != SlideGroup(Kind::SteerLeft, 0), "pedals");
+        CHECK(SlideGroup(Kind::Gas, 0) == SlideGroup(Kind::Brake, 0) && SlideGroup(Kind::Gas, 0) == SlideGroup(Kind::Button, button::B) &&
+              SlideGroup(Kind::Gas, 0) != SlideGroup(Kind::SteerLeft, 0), "the pedals and nitrous");
         CHECK(SlideGroup(Kind::Button, button::DpadUp) == SlideGroup(Kind::Button, button::DpadRight) &&
               SlideGroup(Kind::Button, button::DpadUp) != 0, "the D-pad");
-        CHECK(SlideGroup(Kind::Button, button::A) == 0 && SlideGroup(Kind::Button, button::B) == 0 && SlideGroup(Kind::Settings, 0) == 0 &&
+        CHECK(SlideGroup(Kind::Button, button::A) == 0 && SlideGroup(Kind::Button, button::X) == 0 && SlideGroup(Kind::Settings, 0) == 0 &&
               SlideGroup(Kind::Stick, 0) == 0, "buttons keep their finger");
     }
 

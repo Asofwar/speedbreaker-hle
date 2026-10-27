@@ -511,7 +511,7 @@ namespace settings
               .env = "NFSMW_TOUCH", .defaultValue = double(TouchControlsMode::Auto), .entries = kTouchControlsEntries },
             { .id = Id::TouchSteering, .category = Category::Touch, .type = Type::Enum, .apply = Apply::Live,
               .table = "touch", .key = "steering", .label = "Steering",
-              .description = "Buttons: hold left or right, the car steers in a moment. Tilt: turn the device as a wheel. Stick: put a finger down on the left and move it.",
+              .description = "Buttons: hold left or right, the car steers in a moment. Tilt: turn the device as a wheel; the brakes move to the left thumb. Stick: put a finger down on the left and move it.",
               .env = "NFSMW_TOUCH_STEERING", .defaultValue = double(TouchSteeringMode::Buttons), .entries = kTouchSteeringEntries },
             { .id = Id::TouchButtonSteering, .category = Category::Touch, .type = Type::Enum, .apply = Apply::Live,
               .table = "touch", .key = "button_steering", .label = "Button Steering",

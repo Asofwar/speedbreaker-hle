@@ -79,13 +79,20 @@ namespace hid::touchlayout
     struct Point { float x = 0, y = 0; };
     using Placements = std::map<std::string, Point>;
 
+    // The layouts the player places controls in apart: driving with the steering buttons
+    // or the stick, driving under Tilt (its pedals are elsewhere), the menus.
+    inline const char* LayoutName(Mode mode, Steering steering)
+    {
+        return mode == Mode::Menu ? "menus" : steering == Steering::Tilt ? "tilt" : "driving";
+    }
+
     // A control's name in Placements (and touch_layout.txt): its layout, what it is, and
-    // its button ("driving gas", "menus button 1000").
-    inline std::string Key(Mode mode, const Widget& w)
+    // its button ("driving gas", "tilt brake", "menus button 1000").
+    inline std::string Key(Mode mode, Steering steering, const Widget& w)
     {
         static const char* const kKinds[] = { "button", "steer_left", "steer_right", "stick", "gas", "brake", "lt", "rt", "settings",
                                               "edit_switch", "edit_reset", "edit_done" };
-        std::string key = std::string(mode == Mode::Driving ? "driving " : "menus ") + kKinds[size_t(w.kind)];
+        std::string key = std::string(LayoutName(mode, steering)) + " " + kKinds[size_t(w.kind)];
         if (w.kind == Kind::Button)
         {
             char bit[8];
@@ -134,17 +141,30 @@ namespace hid::touchlayout
                 l.stickZoneTop = top + 8.0f * u;
                 l.stickTravel = 12.0f * u;
             }
-            // The pedals and the driving buttons, bottom right.
+            // The pedals and the driving buttons, bottom right; under Tilt, with no steering
+            // for the left thumb, the brake and the handbrake are its, bottom left (as the
+            // mobile racers have it), and the right one keeps the gas, nitrous, Speedbreaker.
             const float gx = W - m - 13.0f * u, gy = H - m - 13.0f * u;
             if (!autoGas)
                 add(Kind::Gas, 0, gx, gy, 13.0f * u, "GAS");
             else
                 add(Kind::Button, button::B, gx, gy, 13.0f * u, "NITRO");
-            add(Kind::Brake, 0, gx - 28.0f * u, H - m - 10.0f * u, 10.0f * u, "BRAKE");
             if (!autoGas)
                 add(Kind::Button, button::B, gx - 2.0f * u, gy - 25.0f * u, 9.0f * u, "NITRO");
-            add(Kind::Button, button::A, gx - 22.0f * u, gy - 21.0f * u, 8.0f * u, "E-BRAKE");
-            add(Kind::Button, button::X, gx - 49.0f * u, H - m - 8.0f * u, 8.0f * u, "SLOW");
+            if (steering == Steering::Tilt)
+            {
+                // In columns at the edges, clear of the map and the speedometer on a wide
+                // screen (where the game's HUD keeps to the 16:9 middle).
+                add(Kind::Brake, 0, m + 13.0f * u, H - m - 13.0f * u, 13.0f * u, "BRAKE");
+                add(Kind::Button, button::A, m + 13.0f * u, H - m - 38.0f * u, 10.0f * u, "E-BRAKE");
+                add(Kind::Button, button::X, gx - 2.0f * u, autoGas ? gy - 25.0f * u : gy - 44.0f * u, 8.0f * u, "SLOW");
+            }
+            else
+            {
+                add(Kind::Brake, 0, gx - 28.0f * u, H - m - 10.0f * u, 10.0f * u, "BRAKE");
+                add(Kind::Button, button::A, gx - 22.0f * u, gy - 21.0f * u, 8.0f * u, "E-BRAKE");
+                add(Kind::Button, button::X, gx - 49.0f * u, H - m - 8.0f * u, 8.0f * u, "SLOW");
+            }
         }
         else
         {
@@ -170,7 +190,7 @@ namespace hid::touchlayout
         // around and to the left of where it now rests.
         if (placed)
             for (Widget& w : l.widgets)
-                if (auto it = placed->find(Key(mode, w)); it != placed->end())
+                if (auto it = placed->find(Key(mode, steering, w)); it != placed->end())
                 {
                     w.x = std::clamp(it->second.x * W, w.r, std::max(w.r, W - w.r));
                     w.y = std::clamp(it->second.y * H, w.r, std::max(w.r, H - w.r));
@@ -291,13 +311,15 @@ namespace hid::touchlayout
     }
 
     // Controls a finger slides between without lifting: the two steering buttons, the
-    // two pedals, the D-pad's four. 0: none (a finger keeps what it landed on, wherever
-    // it goes, so a thumb drifting off a button keeps holding it).
+    // two pedals and nitrous (which holds the gas too: a thumb rolls from the gas onto it
+    // and back), the D-pad's four. 0: none (a finger keeps what it landed on, wherever it
+    // goes, so a thumb drifting off a button keeps holding it). (B is the menus' face
+    // button too, where no pedal is to slide to.)
     inline int SlideGroup(Kind kind, uint16_t bit)
     {
         if (kind == Kind::SteerLeft || kind == Kind::SteerRight)
             return 1;
-        if (kind == Kind::Gas || kind == Kind::Brake)
+        if (kind == Kind::Gas || kind == Kind::Brake || (kind == Kind::Button && bit == button::B))
             return 2;
         if (kind == Kind::Button && bit != 0 && (bit & ~(button::DpadUp | button::DpadDown | button::DpadLeft | button::DpadRight)) == 0)
             return 3;

@@ -301,7 +301,7 @@ namespace hid::touch
                 if (const int g = Grab(l.widgets, x, y); g >= 0)
                 {
                     const Widget& wd = l.widgets[size_t(g)];
-                    s_drags[e.fingerID] = Drag{ Key(s_editMode, wd), x - wd.x, y - wd.y };
+                    s_drags[e.fingerID] = Drag{ Key(s_editMode, SteeringSetting(), wd), x - wd.x, y - wd.y };
                 }
                 break;
             }
@@ -333,7 +333,7 @@ namespace hid::touch
                     s_editMode = s_editMode == Mode::Driving ? Mode::Menu : Mode::Driving;
                 else if (kind == Kind::EditReset)
                 {
-                    const std::string prefix = s_editMode == Mode::Driving ? "driving " : "menus ";
+                    const std::string prefix = std::string(LayoutName(s_editMode, SteeringSetting())) + " ";
                     std::erase_if(s_placed, [&](const auto& p) { return p.first.rfind(prefix, 0) == 0; });
                 }
                 else if (kind == Kind::EditDone)
@@ -698,7 +698,7 @@ namespace hid::touch
                 f.y = e.tfinger.y * h;
                 if (!f.onControl && std::hypot(f.x - f.startX, f.y - f.startY) > kSlopUnits * Unit(w, h, 1.0f))
                     s_gesture.moved = true;
-                // Sliding onto the other control of its group (steering, pedals, D-pad) takes it.
+                // Sliding onto the other control of its group (steering, pedals and nitrous, D-pad) takes it.
                 if (const int group = f.onControl ? SlideGroup(f.kind, f.button) : 0)
                 {
                     const Layout l = CurrentLayout(w, h);
@@ -757,7 +757,7 @@ namespace hid::touch
             return false;  // (Edit Layout: nothing reaches the game)
 
         int steerDirection = 0;
-        bool gas = false, brake = false, leftTrigger = false, rightTrigger = false, stick = false;
+        bool gas = false, brake = false, nitro = false, leftTrigger = false, rightTrigger = false, stick = false;
         StickAxes stickAxes;
         float w = 0, h = 0;
         WindowSize(w, h);
@@ -768,7 +768,10 @@ namespace hid::touch
                 continue;
             switch (f.kind)
             {
-            case Kind::Button: buttons |= f.button; break;
+            case Kind::Button:
+                buttons |= f.button;
+                nitro = nitro || f.button == button::B;
+                break;
             case Kind::SteerLeft: steerDirection--; break;
             case Kind::SteerRight: steerDirection++; break;
             case Kind::Gas: gas = true; break;
@@ -815,7 +818,8 @@ namespace hid::touch
                     steered = true;
                 }
             }
-            if (gas || (settings::GetBool(Id::TouchAutoGas) && !brake && !otherBrake))
+            // Nitrous holds the gas as well: the thumb that presses it has left the gas.
+            if (gas || (nitro && !brake) || (settings::GetBool(Id::TouchAutoGas) && !brake && !otherBrake))
                 rt = 1.0f;
             if (brake)
             {
@@ -893,7 +897,7 @@ namespace hid::touch
             view.pressed.assign(view.layout.widgets.size(), false);
             for (const auto& [id, drag] : s_drags)
                 for (size_t i = 0; i < view.layout.widgets.size(); i++)
-                    if (Key(s_editMode, view.layout.widgets[i]) == drag.key)
+                    if (Key(s_editMode, SteeringSetting(), view.layout.widgets[i]) == drag.key)
                         view.pressed[i] = true;
             view.opacity = std::max(float(settings::GetInt(Id::TouchOpacity)) / 100.0f, 0.7f);
             view.tilt = false;
