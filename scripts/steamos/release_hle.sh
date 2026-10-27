@@ -1,5 +1,5 @@
 #!/bin/bash
-# release_hle.sh <tag> [build dir] [--windows <deps prefix>] [--publish]: the
+# release_hle.sh <tag> [build dir] [--windows <deps prefix>] [--android <apk>] [--publish]: the
 # SteamOS x86-64 release of the HLE fork (Asofwar/speedbreaker-hle), from a
 # Linux build on Arch (scripts/steamos/make_bundle.sh's requirements; the
 # sb-build container), and with --windows the Windows x86-64 download too:
@@ -7,7 +7,10 @@
 # libraries scripts/windows/deps.sh put in <deps prefix>, and
 # scripts/windows/package.sh makes SpeedBreaker-windows-x86_64.zip. Its
 # FFmpeg is the same 7.1.1 with the same patch, so the third-party source
-# archive covers it too.
+# archive covers it too. --android attaches an APK built from this checkout
+# (scripts/android/build.sh, then android/'s Gradle assembleRelease with
+# -PsbVersion=<the tag without its v>, on a machine with the Android SDK) as
+# SpeedBreaker-android-arm64.apk.
 #
 # The bundle is make_bundle.sh's, with its GNU C Library and GCC runtime
 # (lib/glibc, lib/cxx) and their license files taken from the original
@@ -29,15 +32,17 @@
 # (dist/<tag>/notes.md: the fork's section of README.md and the commits since
 # the previous release tag).
 set -euo pipefail
-TAG="${1:?usage: release_hle.sh <tag> [build dir] [--windows <deps prefix>] [--publish]}"
+TAG="${1:?usage: release_hle.sh <tag> [build dir] [--windows <deps prefix>] [--android <apk>] [--publish]}"
 shift
 BUILD=build
 PUBLISH=0
 WIN_DEPS=""
+ANDROID_APK=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --publish) PUBLISH=1 ;;
         --windows) WIN_DEPS="${2:?--windows needs the prefix of scripts/windows/deps.sh}"; shift ;;
+        --android) ANDROID_APK="${2:?--android needs the APK}"; [ -f "$ANDROID_APK" ] || { echo "release_hle.sh: no $ANDROID_APK" >&2; exit 1; }; shift ;;
         *) BUILD="$1" ;;
     esac
     shift
@@ -119,6 +124,11 @@ if [ -n "$WIN_DEPS" ]; then
     cp "$OUT/windows/SpeedBreaker-windows-x86_64.zip" "$OUT/windows/SpeedBreaker-windows-x86_64.zip.sha256" "$OUT/"
     ASSETS+=("$OUT/SpeedBreaker-windows-x86_64.zip" "$OUT/SpeedBreaker-windows-x86_64.zip.sha256")
 fi
+if [ -n "$ANDROID_APK" ]; then
+    cp "$ANDROID_APK" "$OUT/SpeedBreaker-android-arm64.apk"
+    (cd "$OUT" && sha256sum SpeedBreaker-android-arm64.apk > SpeedBreaker-android-arm64.apk.sha256)
+    ASSETS+=("$OUT/SpeedBreaker-android-arm64.apk" "$OUT/SpeedBreaker-android-arm64.apk.sha256")
+fi
 ASSETS+=("$OUT/SpeedBreaker-$VERSION-third-party-source.tar.xz" "$OUT/SpeedBreaker-$VERSION-third-party-source.tar.xz.sha256")
 
 # 4. The notes.
@@ -137,6 +147,12 @@ prev="$(git describe --tags --abbrev=0 --match 'v*-hle*' HEAD^ 2>/dev/null || ec
         echo "Windows: unzip \`SpeedBreaker-windows-x86_64.zip\` anywhere and start \`SpeedBreaker/SpeedBreaker.exe\` (Windows 10 or 11, a Vulkan driver); the same first-run installer asks for your disc image. Details: docs/windows.md."
         echo
         echo "Windows: распакуйте \`SpeedBreaker-windows-x86_64.zip\` куда угодно и запустите \`SpeedBreaker/SpeedBreaker.exe\` (Windows 10 или 11, драйвер с Vulkan); установщик при первом запуске так же попросит образ диска. Подробнее: docs/windows.md."
+        echo
+    fi
+    if [ -n "$ANDROID_APK" ]; then
+        echo "Android (a test build: Android 13 or newer, arm64; so far run on one Snapdragon 8 Elite Gen 5 phone): install \`SpeedBreaker-android-arm64.apk\`. The installer can't read a disc image on the phone yet: install the game on a PC first and copy what is in its \`game\` folder into \`Android/data/dev.asofwar.speedbreaker/files/game/files\` on the phone. Touch controls are in Settings > Touch; a gamepad works too."
+        echo
+        echo "Android (тестовая сборка: Android 13 и новее, arm64; пока проверена на одном телефоне со Snapdragon 8 Elite Gen 5): установите \`SpeedBreaker-android-arm64.apk\`. Установщик пока не читает образ диска на телефоне: поставьте игру на ПК и скопируйте содержимое её папки \`game\` в \`Android/data/dev.asofwar.speedbreaker/files/game/files\` на телефоне. Сенсорное управление настраивается в Settings > Touch, геймпад тоже работает."
         echo
     fi
     echo "Changes since $prev:"
