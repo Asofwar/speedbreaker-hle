@@ -20,6 +20,8 @@
         android:isGame="true"
         android:hasFragileUserData="true"
         android:allowBackup="false">
+        <!-- simpleperf and the Android Studio profilers from adb on a release build (the shell only, not other apps). -->
+        <profileable android:shell="true" />
         <activity
             android:name=".SpeedBreakerActivity"
             android:exported="true"
