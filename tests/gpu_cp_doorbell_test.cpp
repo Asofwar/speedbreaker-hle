@@ -197,11 +197,11 @@ static void TestSources(const char* commandProcessor, const char* renderer, cons
     CHECK(Follows(cp, "DispatchInterrupt(*guest, 1, n);", "g_cpDoorbell.Ring();", 400),
         "a PM4 INTERRUPT rings after the game's handler");
     // The game's two kick functions, the original first.
-    CHECK(Follows(cp, "PPC_FUNC(sub_82596A00)", "__imp__sub_82596A00(ctx, base);", 40) &&
-        Follows(cp, "__imp__sub_82596A00(ctx, base);", "g_cpDoorbell.Ring();", 80),
+    CHECK(Follows(cp, "SB_HOOK(sub_82596A00)", "SB_ORIGINAL(sub_82596A00)(ctx, base);", 40) &&
+        Follows(cp, "SB_ORIGINAL(sub_82596A00)(ctx, base);", "g_cpDoorbell.Ring();", 80),
         "sub_82596A00 (sets CP_RB_WPTR) rings after it ran");
-    CHECK(Follows(cp, "PPC_FUNC(sub_82596A20)", "__imp__sub_82596A20(ctx, base);", 40) &&
-        Follows(cp, "__imp__sub_82596A20(ctx, base);", "g_cpDoorbell.Ring();", 80),
+    CHECK(Follows(cp, "SB_HOOK(sub_82596A20)", "SB_ORIGINAL(sub_82596A20)(ctx, base);", 40) &&
+        Follows(cp, "SB_ORIGINAL(sub_82596A20)(ctx, base);", "g_cpDoorbell.Ring();", 80),
         "sub_82596A20 (kicks indirect buffers) rings after it ran");
     // Both of the command processor's sleeps follow the protocol: Prepare,
     // look again, then Wait.

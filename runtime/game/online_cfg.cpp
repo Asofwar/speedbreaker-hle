@@ -9,6 +9,7 @@
 // reads the skip-front-end flag and starts a race directly (sub_822BE238) or the front end (sub_823B4428). With NFSMW_ONLINE_CFG=1 the loader is called
 // once, right after the game is created, so the file (game/files/online.cfg, found as the game's file system gives it, D:\online.cfg) is read before that flag is.
 #include <stdafx.h>
+#include <region/region.h>
 
 #include <kernel/function.h>
 #include <kernel/vfs.h>
@@ -21,10 +22,10 @@ static bool WorldModeOn() { const mpcfg::Config c = mpcfg::Load(); return c.enab
 extern "C" PPC_FUNC(__imp__sub_823AF408);  // create the game (called by the main loop at 0x823B0028)
 extern "C" PPC_FUNC(__imp__sub_82538950);  // the online.cfg loader (r3: a path, or 0 for "online.cfg")
 
-PPC_FUNC(sub_823AF408)
+SB_HOOK(sub_823AF408)
 {
     const uint32_t returnTo = uint32_t(ctx.lr);
-    __imp__sub_823AF408(ctx, base);
+    SB_ORIGINAL(sub_823AF408)(ctx, base);
     static bool done = false;
     if (!done && returnTo == 0x823B002C && (std::getenv("NFSMW_ONLINE_CFG") || std::getenv("NFSMW_DEVSTART") || WorldModeOn()))
     {
@@ -97,7 +98,7 @@ static void SkippedStart(uint8_t* base)
 {
     PPC_STORE_U32(0x82C5EBFC, PPC_LOAD_U32(0x828F84F4));
 }
-PPC_FUNC(sub_82546F80)
+SB_HOOK(sub_82546F80)
 {
     static const bool skip = std::getenv("NFSMW_ONLINE_LOCALIP") != nullptr;
     if (skip)
@@ -105,9 +106,9 @@ PPC_FUNC(sub_82546F80)
         SkippedStart(base);
         return;
     }
-    __imp__sub_82546F80(ctx, base);
+    SB_ORIGINAL(sub_82546F80)(ctx, base);
 }
-PPC_FUNC(sub_825471D8)
+SB_HOOK(sub_825471D8)
 {
     static const bool skip = std::getenv("NFSMW_ONLINE_LOCALIP") != nullptr;
     if (skip)
@@ -115,5 +116,5 @@ PPC_FUNC(sub_825471D8)
         SkippedStart(base);
         return;
     }
-    __imp__sub_825471D8(ctx, base);
+    SB_ORIGINAL(sub_825471D8)(ctx, base);
 }

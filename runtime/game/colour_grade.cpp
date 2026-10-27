@@ -26,6 +26,7 @@
 // recomputed from it at every send, so the setting works live (down to 0, the game's own colour), and
 // a block the game changes (a new look) is taken up as the new original.
 #include <stdafx.h>
+#include <region/region.h>
 
 #include <kernel/function.h>
 #include <user/settings.h>
@@ -124,7 +125,7 @@ namespace
     }
 }
 
-PPC_FUNC(sub_82449820)
+SB_HOOK(sub_82449820)
 {
     {
         static std::atomic<uint32_t> calls{ 0 };
@@ -134,7 +135,7 @@ PPC_FUNC(sub_82449820)
     FindSend("vec4", ctx, base);
     if (ctx.lr != kFirstSend)
     {
-        __imp__sub_82449820(ctx, base);
+        SB_ORIGINAL(sub_82449820)(ctx, base);
         return;
     }
 
@@ -152,7 +153,7 @@ PPC_FUNC(sub_82449820)
         {
             if (!LooksLikeGrade(current))
             {
-                __imp__sub_82449820(ctx, base);
+                SB_ORIGINAL(sub_82449820)(ctx, base);
                 return;
             }
             memcpy(s_state.original, current, sizeof(current));
@@ -208,12 +209,12 @@ PPC_FUNC(sub_82449820)
                 ToFloat(s_state.original[3]) + ToFloat(s_state.original[7]) + ToFloat(s_state.original[11]) + ToFloat(s_state.original[15]));
         }
     }
-    __imp__sub_82449820(ctx, base);
+    SB_ORIGINAL(sub_82449820)(ctx, base);
 }
 
 
 // The scalar sends of the same function (sub_82223BB8, 0x82223BB8..0x82224000 as return addresses).
-PPC_FUNC(sub_824491F8)
+SB_HOOK(sub_824491F8)
 {
     FindSend("scalar", ctx, base);
     // g_fBloomScale (the game's own bloom, 4.0 by default), sent from sub_82224380 (looked up by name at
@@ -274,16 +275,16 @@ PPC_FUNC(sub_824491F8)
             fprintf(stderr, "[gradesend] scalar send from %08X, handle %08X: %.5f %.5f %.5f %.5f\n", uint32_t(ctx.lr), ctx.r4.u32, v[0], v[1], v[2], v[3]);
         }
     }
-    __imp__sub_824491F8(ctx, base);
+    SB_ORIGINAL(sub_824491F8)(ctx, base);
 }
 
 
 // The effect parameter lookup by name (sub_82448FE0, r4 the name), logged for the post-processing code's lookups.
-PPC_FUNC(sub_82448FE0)
+SB_HOOK(sub_82448FE0)
 {
     static const bool log = std::getenv("NFSMW_LOG_PARAM_NAMES") != nullptr;
     const uint32_t lr = uint32_t(ctx.lr), name = ctx.r4.u32;
-    __imp__sub_82448FE0(ctx, base);
+    SB_ORIGINAL(sub_82448FE0)(ctx, base);
     if (log)
     {
         static std::mutex m;
@@ -363,7 +364,7 @@ namespace
     }
 }
 
-PPC_FUNC(sub_82458C20)
+SB_HOOK(sub_82458C20)
 {
     constexpr double kDeep = 1.4;
     const float rich = std::clamp(settings::GetFloat(settings::Id::RichBlacks), 0.0f, 1.0f);
@@ -375,7 +376,7 @@ PPC_FUNC(sub_82458C20)
         if (logged++ < 4)
             fprintf(stderr, "[ramp] the game's display ramp exponent %.3f is deepened to %.3f (Rich Blacks %.2f)\n", e, ctx.f1.f64, rich);
     }
-    __imp__sub_82458C20(ctx, base);
+    SB_ORIGINAL(sub_82458C20)(ctx, base);
 }
 
 
@@ -402,24 +403,24 @@ namespace
     }
 }
 
-PPC_FUNC(sub_82454B58)
+SB_HOOK(sub_82454B58)
 {
     ctx.r3.s64 = ShadowSize();
 }
 
-PPC_FUNC(sub_82454B60)
+SB_HOOK(sub_82454B60)
 {
     ctx.r3.s64 = ShadowSize();
 }
 
-PPC_FUNC(sub_82589EA8)
+SB_HOOK(sub_82589EA8)
 {
     if (ctx.lr == 0x82454CB8 && ctx.r3.u32 == 1600 && ctx.r4.u32 == 1600)
         ctx.r3.u32 = ctx.r4.u32 = ShadowSize();
-    __imp__sub_82589EA8(ctx, base);
+    SB_ORIGINAL(sub_82589EA8)(ctx, base);
 }
 
-PPC_FUNC(sub_8245D1B8)
+SB_HOOK(sub_8245D1B8)
 {
     if (ctx.lr == 0x82454C7C)
     {
@@ -430,5 +431,5 @@ PPC_FUNC(sub_8245D1B8)
             PPC_STORE_U32(block + 12, ShadowSize());
         }
     }
-    __imp__sub_8245D1B8(ctx, base);
+    SB_ORIGINAL(sub_8245D1B8)(ctx, base);
 }

@@ -9,6 +9,7 @@
 // The names come from the game's own table of vehicle names (a run of NUL-separated names, "RX8", "rx8", "LANCEREVO8", ... in the heap); the keys from the game's own key function,
 // called from a hook with the guest's own context, so the catalogue is built on the first game frame after the table exists (NFSMW_LOG_CARS=1 prints it).
 #include <stdafx.h>
+#include <region/region.h>
 
 #include "car_select.h"
 #include "mp_adapter.h"
@@ -236,7 +237,7 @@ namespace game
 
 namespace game { void WorldModeFrame(PPCContext& ctx, uint8_t* base); }
 
-PPC_FUNC(sub_823AFE20)
+SB_HOOK(sub_823AFE20)
 {
     static std::chrono::steady_clock::time_point last;
     {
@@ -254,10 +255,10 @@ PPC_FUNC(sub_823AFE20)
     }
 run:
     game::WorldModeFrame(ctx, base);
-    __imp__sub_823AFE20(ctx, base);
+    SB_ORIGINAL(sub_823AFE20)(ctx, base);
 }
 
-PPC_FUNC(sub_82333680)
+SB_HOOK(sub_82333680)
 {
     bool first = false;
     {
@@ -297,7 +298,7 @@ PPC_FUNC(sub_82333680)
     if (std::getenv("NFSMW_LOG_CARS"))
         fprintf(stderr, "[cars] opponent script call: racer key (r4) = %016llX\n", (unsigned long long)ctx.r4.u64);
     const bool wasStock = game::StockPartsFor(want != 0);
-    __imp__sub_82333680(ctx, base);
+    SB_ORIGINAL(sub_82333680)(ctx, base);
     game::StockPartsFor(wasStock);
     t_wantedKey = 0;
     {
@@ -306,7 +307,7 @@ PPC_FUNC(sub_82333680)
     }
 }
 
-PPC_FUNC(sub_82147BF8)
+SB_HOOK(sub_82147BF8)
 {
     if (t_wantedKey)
     {
@@ -315,13 +316,13 @@ PPC_FUNC(sub_82147BF8)
             if (const uint32_t w = FindTemplate(base, t_wantedKey))
                 ctx.r4.u64 = w;
     }
-    __imp__sub_82147BF8(ctx, base);
+    SB_ORIGINAL(sub_82147BF8)(ctx, base);
 }
 
 // Body kit, spoiler, wheels: an opponent without a preset ride gets the car's stock parts (sub_824EE090, RideInfo::SetStockParts), then random ones for one of three groups of slots
 // (sub_824EE4D0, RideInfo::SetRandomParts, the game's own xorshift at 0x829043AC); sub_822CDAB8 writes the ride into the 408-byte record the vehicle is built from. Every player's
 // own car in a multiplayer race is the car's stock one (sub_824729E0 below), so a car standing for a player gets only the stock parts, and looks the same on every machine.
-PPC_FUNC(sub_824EE4D0)
+SB_HOOK(sub_824EE4D0)
 {
     if (t_stockParts)
     {
@@ -331,15 +332,15 @@ PPC_FUNC(sub_824EE4D0)
         __imp__sub_824EE090(ctx, base);
         return;
     }
-    __imp__sub_824EE4D0(ctx, base);
+    SB_ORIGINAL(sub_824EE4D0)(ctx, base);
 }
 
 // A preset ride (the race script's parameters name one) fills the record instead (sub_822CDBC0), with that preset's parts.
-PPC_FUNC(sub_822CDBC0)
+SB_HOOK(sub_822CDBC0)
 {
     if (t_stockParts && std::getenv("NFSMW_LOG_CARS"))
         fprintf(stderr, "[cars] a car standing for a player is made from a preset ride\n");
-    __imp__sub_822CDBC0(ctx, base);
+    SB_ORIGINAL(sub_822CDBC0)(ctx, base);
 }
 
 // The player's vehicle is the first one a race creates (the vehicle table, 0x82C745A8, still has no entries), through sub_824729E0.
@@ -350,7 +351,7 @@ PPC_FUNC(sub_822CDBC0)
 // doesn't have to choose it again in the game's car selection; it comes as the car's stock one (no career customisation), as the others draw it.
 constexpr uint32_t kSkipFeFlag = 0x82A2CD44, kSkipFeCarName = 0x828FD2C8, kSkipFeCarBuffer = 0x82A2D778;
 
-PPC_FUNC(sub_824729E0)
+SB_HOOK(sub_824729E0)
 {
     std::string lobbyCar;
     uint32_t oldName = 0;
@@ -416,7 +417,7 @@ PPC_FUNC(sub_824729E0)
     }
     const uint64_t was = t_wantedKey;
     t_wantedKey = want ? want : was;
-    __imp__sub_824729E0(ctx, base);
+    SB_ORIGINAL(sub_824729E0)(ctx, base);
     t_wantedKey = was;
     if (!lobbyCar.empty())
     {

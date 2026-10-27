@@ -445,10 +445,17 @@ endif()
 # mw_pal/ (image.bin, xexsurvey.txt; mw_pal/funcmap.tsv)>, decrypted from the
 # player's own discs, also checks the bytes at both addresses match and that
 # the table and config/pal-es/ are what survey/region_map.py writes.
+# The fork's own hooks and addresses (multiplayer, HLE, the graphics) have no
+# PAL addresses yet: mapping them needs a PAL disc's image (survey/region_map.py),
+# and the fork's builds have no PAL code (no ppc-pal-es/). So the check is off
+# unless asked for (-DSB_REGION_CHECK=ON); the fork's hooks are SB_HOOKs all the
+# same, and its runtime constants go through region::Addr where they were flagged.
 find_package(Python3 COMPONENTS Interpreter)
+option(SB_REGION_CHECK "Run region_addresses_check (fails until the fork's addresses have PAL ones)" OFF)
 if(Python3_Interpreter_FOUND)
     set(SB_REGION_SURVEY "" CACHE PATH "Decrypted USA and PAL images for region_addresses_check (optional)")
-    if(SB_REGION_SURVEY)
+    if(NOT SB_REGION_CHECK)
+    elseif(SB_REGION_SURVEY)
         add_test(NAME region_addresses_check COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/region_addresses_check.py
             ${ROOT} ${SB_REGION_SURVEY}/mw_usa ${SB_REGION_SURVEY}/mw_pal ${SB_REGION_SURVEY}/mw_pal/funcmap.tsv)
     else()

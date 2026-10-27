@@ -16,6 +16,7 @@
 // A timedemo, captured or replayed, keeps the movies: its input log runs from launch, so a recording stays in step with its
 // replays whatever the setting.
 #include <stdafx.h>
+#include <region/region.h>
 
 #include "timedemo.h"
 #include <kernel/function.h>
@@ -68,7 +69,7 @@ namespace
     }
 }
 
-PPC_FUNC(sub_82282F18)
+SB_HOOK(sub_82282F18)
 {
     const uint32_t screen = ctx.r3.u32, message = ctx.r4.u32;
     if (PPC_LOAD_U32(message + 24) == kMessagePlayMovie && settings::GetBool(settings::Id::SkipStartupMovies) &&
@@ -98,5 +99,5 @@ PPC_FUNC(sub_82282F18)
     }
     ctx.r3.u64 = screen;
     ctx.r4.u64 = message;
-    __imp__sub_82282F18(ctx, base);
+    SB_ORIGINAL(sub_82282F18)(ctx, base);
 }

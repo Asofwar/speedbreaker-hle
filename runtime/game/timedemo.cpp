@@ -53,6 +53,7 @@
 // end_loop is the first RealLoop not wholly in the log, and the replay's
 // "log ended at loop L" names the same loop.
 #include <stdafx.h>
+#include <region/region.h>
 #include "timedemo.h"
 
 #include <debug/bench.h>
@@ -652,16 +653,16 @@ namespace timedemo
 
 // Joylog's init, once, from the boot. With a mode on: the flag the init
 // checks, then whether the mode came on.
-PPC_FUNC(sub_823B7D90)
+SB_HOOK(sub_823B7D90)
 {
     const detail::Config& c = Config();
     if (c.mode == Mode::Off)
     {
-        __imp__sub_823B7D90(ctx, base);
+        SB_ORIGINAL(sub_823B7D90)(ctx, base);
         return;
     }
     Store(kJoylogEnable, 1);
-    __imp__sub_823B7D90(ctx, base);
+    SB_ORIGINAL(sub_823B7D90)(ctx, base);
     const std::filesystem::path& file = timedemo::File();
     if (c.mode == Mode::Capture)
     {
@@ -687,7 +688,7 @@ PPC_FUNC(sub_823B7D90)
 // reported while a mode is on; every other caller, and any caller without a
 // mode, goes to the import as before (kernel/unimplemented.cpp: exit 3, or
 // on with NFSMW_STUB_CONTINUE=1).
-PPC_FUNC(sub_8262CE48)
+SB_HOOK(sub_8262CE48)
 {
     if (timedemo::Active())
     {
@@ -697,5 +698,5 @@ PPC_FUNC(sub_8262CE48)
             return;
         }
     }
-    __imp__sub_8262CE48(ctx, base);
+    SB_ORIGINAL(sub_8262CE48)(ctx, base);
 }

@@ -21,6 +21,7 @@
 // run. NFSMW_TIMEDEMO_CLOUD_HOLD=0 turns it off. Capture and normal play are
 // untouched: the sky is drawing only.
 #include <stdafx.h>
+#include <region/region.h>
 #include "timedemo.h"
 
 #include <kernel/function.h>
@@ -39,11 +40,11 @@ namespace
     }();
 }
 
-PPC_FUNC(sub_824507C0)
+SB_HOOK(sub_824507C0)
 {
     if (!s_enabled || !timedemo::Replaying())
     {
-        __imp__sub_824507C0(ctx, base);
+        SB_ORIGINAL(sub_824507C0)(ctx, base);
         return;
     }
     static std::atomic<bool> s_said{ false };
@@ -59,7 +60,7 @@ PPC_FUNC(sub_824507C0)
             ctx = saved;
         }
         PPC_STORE_U32(kCloudSeen, PPC_LOAD_U32(kTickCounter));
-        __imp__sub_824507C0(ctx, base);
+        SB_ORIGINAL(sub_824507C0)(ctx, base);
         if (PPC_LOAD_U32(kCloudOffset) == offset)
             return;
     }

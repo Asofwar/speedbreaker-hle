@@ -9,6 +9,7 @@
 //
 // Everything the game asks is logged once with NFSMW_NET_LOG=1.
 #include <stdafx.h>
+#include <region/region.h>
 #include <online/online.h>
 #include <online/steam.h>
 #include "dispatcher.h"
@@ -1572,7 +1573,7 @@ GUEST_FUNCTION_HOOK(__imp__NetDll_WSARecv, NetDll_WSARecv);
 // "-nosecure" leaves the map out; the lobby's own address comes from the
 // directory server anyway.
 extern "C" PPC_FUNC(__imp__sub_828198C0);
-PPC_FUNC(sub_828198C0)
+SB_HOOK(sub_828198C0)
 {
     static const bool fakeLive = online::Enabled();
     if (fakeLive && (ctx.r3.u32 == 0 || base[ctx.r3.u32] == 0))
@@ -1585,5 +1586,5 @@ PPC_FUNC(sub_828198C0)
         NETLOG("NetConnStartup: \"-nosecure\" (no XNet secure layer here)");
         ctx.r3.u64 = options;
     }
-    __imp__sub_828198C0(ctx, base);
+    SB_ORIGINAL(sub_828198C0)(ctx, base);
 }

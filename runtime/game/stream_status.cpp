@@ -33,6 +33,7 @@
 // it is. Each stream's first data leaves a [timedemo] stream line. Outside a
 // timedemo nothing changes.
 #include <stdafx.h>
+#include <region/region.h>
 #include "stream_hold.h"
 #include "timedemo.h"
 
@@ -56,11 +57,11 @@ namespace
     uint32_t s_heldLoop[kChannels];
 }
 
-PPC_FUNC(sub_821C8AD8)
+SB_HOOK(sub_821C8AD8)
 {
     using game::streams::Action;
     const PPCRegister stream = ctx.r3, out = ctx.r4;
-    __imp__sub_821C8AD8(ctx, base);
+    SB_ORIGINAL(sub_821C8AD8)(ctx, base);
     if (!timedemo::Active() || !timedemo::OnMainThread() || ctx.r3.s32 != 0)
         return;
     const uint32_t channel = PPC_LOAD_U32(stream.u32 + 20);
@@ -101,7 +102,7 @@ PPC_FUNC(sub_821C8AD8)
         std::this_thread::sleep_for(kWaitStep);
         ctx.r3 = stream;
         ctx.r4 = out;
-        __imp__sub_821C8AD8(ctx, base);
+        SB_ORIGINAL(sub_821C8AD8)(ctx, base);
         if (ctx.r3.s32 != 0)
             return;
         action = next();

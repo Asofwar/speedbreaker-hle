@@ -23,6 +23,7 @@
 // count reaches 0 exactly where the original's does); a damaged one fills
 // its stated size and stops.
 #include <stdafx.h>
+#include <region/region.h>
 #include <kernel/function.h>
 
 extern "C" PPC_FUNC(__imp__sub_823BD558);
@@ -52,7 +53,7 @@ namespace
     }
 }
 
-PPC_FUNC(sub_823BD558)
+SB_HOOK(sub_823BD558)
 {
     const uint32_t block = ctx.r3.u32;
     uint32_t out = ctx.r4.u32;

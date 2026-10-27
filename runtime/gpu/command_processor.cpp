@@ -1,6 +1,7 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING).
 // PM4 packet semantics follow Xenia (gpu/command_processor.cc, BSD license).
 #include <stdafx.h>
+#include <region/region.h>
 #include <game/hfr.h>
 #include "command_processor.h"
 
@@ -1561,15 +1562,15 @@ namespace gpu
 // still found, by the idle sleep's timeout; NFSMW_LOG_CP_IDLE=1 counts any
 // as "found work not rung".
 extern "C" PPC_FUNC(__imp__sub_82596A00);
-PPC_FUNC(sub_82596A00)
+SB_HOOK(sub_82596A00)
 {
-    __imp__sub_82596A00(ctx, base);
+    SB_ORIGINAL(sub_82596A00)(ctx, base);
     gpu::g_cpDoorbell.Ring();
 }
 
 extern "C" PPC_FUNC(__imp__sub_82596A20);
-PPC_FUNC(sub_82596A20)
+SB_HOOK(sub_82596A20)
 {
-    __imp__sub_82596A20(ctx, base);
+    SB_ORIGINAL(sub_82596A20)(ctx, base);
     gpu::g_cpDoorbell.Ring();
 }

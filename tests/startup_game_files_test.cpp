@@ -137,7 +137,7 @@ static void Xex(const fs::path& root, const Manifest& manifest)
     // and (the same size) maybe a damaged dump.
     r = CheckInstalledXex(dir, other, manifest.titleId, 16, manifest);
     CHECK(r.error == Error::UnsupportedVersion && r.foundHash == other, "another version: %s", ErrorName(r.error));
-    CHECK(Has(r.message, ("The game folder " + dir.string() + " is Need for Speed: Most Wanted, but not the version").c_str()) &&
+    CHECK(Has(r.message, ("The game folder " + dir.string() + " is Need for Speed: Most Wanted, but not a version this build supports").c_str()) &&
         Has(r.message, other.c_str()) && Has(r.message, good.c_str()) && Has(r.message, "unless this one is a damaged dump"),
         "another version: %s", r.message.c_str());
     r = CheckInstalledXex(dir, other, manifest.titleId, 17, manifest);

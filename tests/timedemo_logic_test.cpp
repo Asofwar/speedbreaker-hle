@@ -339,7 +339,7 @@ namespace
             "WorldStepTime rounds in a timedemo whatever NFSMW_GAME_TIME and the display");
 
         std::string movie = Read(rt + "/game/movie_pacing.cpp");
-        size_t swap = movie.find("PPC_FUNC(sub_825985A0)");
+        size_t swap = movie.find("SB_HOOK(sub_825985A0)");
         CHECK(swap != std::string::npos && Before(movie, "ctx.r3.u64 = timedemo::kUncappedSwap;", "uint32_t arg = ctx.r3.u32;", swap),
             "the swap callback's uncapped argument comes before anything else it does");
 
@@ -364,8 +364,8 @@ namespace
             "the device selector's notifications go through the timedemo");
 
         std::string timedemo = Read(rt + "/game/timedemo.cpp");
-        size_t brk = timedemo.find("PPC_FUNC(sub_8262CE48)");
-        CHECK(brk != std::string::npos && timedemo.find("__imp__sub_8262CE48(ctx, base);", brk) != std::string::npos,
+        size_t brk = timedemo.find("SB_HOOK(sub_8262CE48)");
+        CHECK(brk != std::string::npos && timedemo.find("SB_ORIGINAL(sub_8262CE48)(ctx, base);", brk) != std::string::npos,
             "every other DbgBreakPoint still reaches the import");
     }
 }

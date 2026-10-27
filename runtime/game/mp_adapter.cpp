@@ -10,6 +10,7 @@
 // This hook runs the game's own step first, then reads the local player's car (to send) or writes a remote player's state into the body that stands for
 // that player. NFSMW_MP_GHOST=<seconds> is the test without a network: the stand-in body replays the local car as it was that many seconds ago.
 #include <stdafx.h>
+#include <region/region.h>
 
 #include <kernel/function.h>
 #include <kernel/heap.h>
@@ -993,11 +994,11 @@ namespace
     }
 }
 
-PPC_FUNC(sub_82528448)
+SB_HOOK(sub_82528448)
 {
     const uint32_t obj = ctx.r3.u32;
     ApplyRemote(A(), base, obj);
-    __imp__sub_82528448(ctx, base);
+    SB_ORIGINAL(sub_82528448)(ctx, base);
 
     Adapter& a = A();
     if (!a.ghost && a.server.empty())
@@ -1243,7 +1244,7 @@ namespace game
 // vehicle's animation has reached (the cars roll from where they appear to their starting slots). Every game puts its own player in slot 0; with a start barrier
 // the local player is given the slot of its join order instead: its call gets the pose that slot's vehicle was just given, so the car really starts there, and
 // the other players' cars (written into the opponents' bodies) are where their games put them. NFSMW_MP_TRACE_POSE=1 logs the calls.
-PPC_FUNC(sub_82420FC0)
+SB_HOOK(sub_82420FC0)
 {
     static const bool trace = std::getenv("NFSMW_MP_TRACE_POSE") != nullptr;
     static std::vector<uint32_t> vehicles;                   // vehicle objects in order of first call: the table order
@@ -1301,7 +1302,7 @@ PPC_FUNC(sub_82420FC0)
             fprintf(stderr, "[pose] #%d vehicle %08X (#%zu) pos (%.2f %.2f %.2f)\n", n, v, idx, LoadF(base, m + 48), LoadF(base, m + 52), LoadF(base, m + 56));
         ++n;
     }
-    __imp__sub_82420FC0(ctx, base);
+    SB_ORIGINAL(sub_82420FC0)(ctx, base);
 }
 
 // For the settings page (ui/online_menu.cpp), any thread.
@@ -1456,11 +1457,11 @@ namespace game
 // the game's table, as the race script creates each opponent. The opponents that are other players get their own name here instead, in the order the opponents are made (the
 // players in the race, in id order: the same roster the opponents' cars are made for). The text goes in a block of the game's own heap, kept for the whole session.
 extern "C" PPC_FUNC(__imp__sub_82335248);
-PPC_FUNC(sub_82335248)
+SB_HOOK(sub_82335248)
 {
     Adapter& a = A();
     const uint32_t racer = ctx.r3.u32;
-    __imp__sub_82335248(ctx, base);
+    SB_ORIGINAL(sub_82335248)(ctx, base);
     if (a.server.empty() || !a.net)
         return;
     std::vector<uint8_t> players;

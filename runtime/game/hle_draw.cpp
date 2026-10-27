@@ -41,6 +41,7 @@
 // material's dirty bits. Mismatches are reported on stderr; a summary every
 // 2^20 checks.
 #include <stdafx.h>
+#include <region/region.h>
 
 #include <kernel/function.h>
 
@@ -49,21 +50,21 @@ extern "C" PPC_FUNC(__imp__sub_825A28A8);  // D3D: copy dirty registers into typ
 extern "C" PPC_FUNC(__imp__sub_825A2A60);  // D3D: copy dirty shader float constants
 extern "C" PPC_FUNC(__imp__sub_825A2968);  // D3D: copy dirty fetch constants
 extern "C" PPC_FUNC(__imp__sub_82699100);  // game (effects): apply a material's dirty parameters
-PPC_FUNC(sub_825A27F0);  // D3D: a copy that crosses the segment's end (MakeSpace)
-PPC_FUNC(sub_825A2B88);  // D3D: vertex fetch constants from the stream sources
-PPC_FUNC(sub_825A38F8);  // D3D: shaders (IM_LOAD)
-PPC_FUNC(sub_8259B4C0);  // D3D: SetVertexShaderConstantI
-PPC_FUNC(sub_8259B510);  // D3D: SetPixelShaderConstantI
-PPC_FUNC(sub_8259B380);  // D3D: SetVertexShaderConstantB
-PPC_FUNC(sub_8259B3D8);  // D3D: SetPixelShaderConstantB
-PPC_FUNC(sub_8258A450);  // D3D: SetTexture
-PPC_FUNC(sub_82594A78);  // D3D: a resource's last reference gone
+SB_HOOK(sub_825A27F0);  // D3D: a copy that crosses the segment's end (MakeSpace)
+SB_HOOK(sub_825A2B88);  // D3D: vertex fetch constants from the stream sources
+SB_HOOK(sub_825A38F8);  // D3D: shaders (IM_LOAD)
+SB_HOOK(sub_8259B4C0);  // D3D: SetVertexShaderConstantI
+SB_HOOK(sub_8259B510);  // D3D: SetPixelShaderConstantI
+SB_HOOK(sub_8259B380);  // D3D: SetVertexShaderConstantB
+SB_HOOK(sub_8259B3D8);  // D3D: SetPixelShaderConstantB
+SB_HOOK(sub_8258A450);  // D3D: SetTexture
+SB_HOOK(sub_82594A78);  // D3D: a resource's last reference gone
 extern "C" PPC_FUNC(__imp__sub_8258D770);  // D3D: SetStreamSource(dev, stream, vb, offset, stride)
 extern "C" PPC_FUNC(__imp__sub_82593A58);  // D3D: DrawIndexedVertices
-PPC_FUNC(sub_82597070);  // D3D: MakeSpace (next ring segment)
-PPC_FUNC(sub_82595E78);  // D3D: grow the predicated draws' record list
+SB_HOOK(sub_82597070);  // D3D: MakeSpace (next ring segment)
+SB_HOOK(sub_82595E78);  // D3D: grow the predicated draws' record list
 extern "C" PPC_FUNC(__imp__sub_825A2B88);
-PPC_FUNC(sub_825A3EC8);  // below
+SB_HOOK(sub_825A3EC8);  // below
 
 namespace
 {
@@ -712,7 +713,7 @@ namespace
             before.insert(before.end(), base + r.at, base + r.at + r.size);
         {
             const PPCContext saved = ctx;
-            __imp__sub_82699100(ctx, base);
+            SB_ORIGINAL(sub_82699100)(ctx, base);
             ctx = saved;
         }
         for (const Region& r : regions)
@@ -897,51 +898,51 @@ namespace hledraw
     }
 }
 
-PPC_FUNC(sub_825A3EC8)
+SB_HOOK(sub_825A3EC8)
 {
     if (!(s_mode & 1))
     {
-        __imp__sub_825A3EC8(ctx, base);
+        SB_ORIGINAL(sub_825A3EC8)(ctx, base);
         return;
     }
     Commit(ctx, base, ctx.r3.u32);
 }
 
-PPC_FUNC(sub_825A28A8)
+SB_HOOK(sub_825A28A8)
 {
     if (!(s_mode & 1))
     {
-        __imp__sub_825A28A8(ctx, base);
+        SB_ORIGINAL(sub_825A28A8)(ctx, base);
         return;
     }
     RegsEntry(ctx, base, ctx.r3.u32, ctx.r4.u64, ctx.r5.u32, ctx.r6.u32);
 }
 
-PPC_FUNC(sub_825A2A60)
+SB_HOOK(sub_825A2A60)
 {
     if (!(s_mode & 1))
     {
-        __imp__sub_825A2A60(ctx, base);
+        SB_ORIGINAL(sub_825A2A60)(ctx, base);
         return;
     }
     ConstsEntry(ctx, base, ctx.r3.u32, ctx.r4.u64, ctx.r5.u32, ctx.r6.u32);
 }
 
-PPC_FUNC(sub_825A2968)
+SB_HOOK(sub_825A2968)
 {
     if (!(s_mode & 1))
     {
-        __imp__sub_825A2968(ctx, base);
+        SB_ORIGINAL(sub_825A2968)(ctx, base);
         return;
     }
     FetchEntry(ctx, base, ctx.r3.u32, ctx.r4.u64, ctx.r5.u32, ctx.r6.u32);
 }
 
-PPC_FUNC(sub_82699100)
+SB_HOOK(sub_82699100)
 {
     if (!(s_mode & 2))
     {
-        __imp__sub_82699100(ctx, base);
+        SB_ORIGINAL(sub_82699100)(ctx, base);
         return;
     }
     if (s_verify)
@@ -954,11 +955,11 @@ PPC_FUNC(sub_82699100)
 // reference (0x80000 in its Common word) and the stream's dirty bit (1024 in
 // +48), the old one's reference dropped (its fence, +4, the device's current
 // one, [+10396]; freed when no reference is left), the stream's slot.
-PPC_FUNC(sub_8258D770)
+SB_HOOK(sub_8258D770)
 {
     if (!(s_mode & 4))
     {
-        __imp__sub_8258D770(ctx, base);
+        SB_ORIGINAL(sub_8258D770)(ctx, base);
         return;
     }
     const uint32_t dev = ctx.r3.u32, stream = ctx.r4.u32, vb = ctx.r5.u32, offset = ctx.r6.u32, stride = ctx.r7.u32;

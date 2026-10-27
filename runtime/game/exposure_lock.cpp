@@ -51,6 +51,7 @@
 // simulation or its Joylog sees. Outside the write watch's shadow mode the
 // read waits as before.
 #include <stdafx.h>
+#include <region/region.h>
 #include "timedemo.h"
 
 #include <kernel/function.h>
@@ -61,7 +62,7 @@
 
 extern "C" PPC_FUNC(__imp__sub_82589398);  // D3D: LockRect of a texture's level
 extern "C" PPC_FUNC(__imp__sub_82597410);  // D3D: the fence a lock of a resource waits for
-PPC_FUNC(sub_82597498);  // D3D: BlockOnFence (through debug/timeline.cpp's hook: a game wait)
+SB_HOOK(sub_82597498);  // D3D: BlockOnFence (through debug/timeline.cpp's hook: a game wait)
 
 namespace
 {
@@ -101,12 +102,12 @@ namespace
     }
 }
 
-PPC_FUNC(sub_82589398)
+SB_HOOK(sub_82589398)
 {
     cpulocks::Note(base, ctx.r3.u32);  // the textures the CPU reads (gpu/cpu_locks.h)
     if (uint32_t(ctx.lr) != kExposureLock)
     {
-        __imp__sub_82589398(ctx, base);
+        SB_ORIGINAL(sub_82589398)(ctx, base);
         return;
     }
     if (!(s_enabled && timedemo::Replaying()))
@@ -119,7 +120,7 @@ PPC_FUNC(sub_82589398)
                                 "(NFSMW_TIMEDEMO_EXPOSURE_WAIT=1: it waits)\n");
         }
         const uint32_t out = ctx.r7.u32;
-        __imp__sub_82589398(ctx, base);
+        SB_ORIGINAL(sub_82589398)(ctx, base);
         HandOutCopy(out, base);
         return;
     }
@@ -140,7 +141,7 @@ PPC_FUNC(sub_82589398)
         // it in its own frame; the calls' frames go below it.
         const uint32_t sp = (ctx.r1.u32 - 256) & ~15u;
         PPC_STORE_U32(sp + 80, fence);
-        const uint32_t device = PPC_LOAD_U32(PPC_LOAD_U32(0x82000B48));  // (KeGetCurrentProcessType() is 1: the title's)
+        const uint32_t device = PPC_LOAD_U32(PPC_LOAD_U32(region::Addr(0x82000B48)));  // (KeGetCurrentProcessType() is 1: the title's)
         ctx.r1.u64 = sp;
         ctx.r3.u64 = device;
         ctx.r4.u64 = sp + 80;
@@ -154,5 +155,5 @@ PPC_FUNC(sub_82589398)
         }
         ctx = saved;
     }
-    __imp__sub_82589398(ctx, base);
+    SB_ORIGINAL(sub_82589398)(ctx, base);
 }

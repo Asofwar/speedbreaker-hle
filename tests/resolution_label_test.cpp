@@ -63,8 +63,15 @@ static void ReadEntries(const std::string& src)
         const size_t q1 = line.find('"'), q2 = line.find('"', q1 + 1), q3 = line.find('"', q2 + 1), q4 = line.find('"', q3 + 1);
         if (open == std::string::npos || q4 == std::string::npos)
             continue;
+        // (Or a scale per axis, in sixths: { (12 << 8) | 8, "1.5x1", ... }.)
         const std::string value = line.substr(open + 1, line.find(',', open) - open - 1);
-        const int v = value.find("kResolutionAuto") != std::string::npos ? 0 : std::stoi(value);
+        int v = 0;
+        if (value.find("kResolutionAuto") != std::string::npos)
+            v = 0;
+        else if (const size_t shift = value.find("<<"); shift != std::string::npos)
+            v = (std::stoi(value.substr(value.find('(') + 1)) << 8) | std::stoi(value.substr(value.find('|') + 1));
+        else
+            v = std::stoi(value);
         s_entries[v] = { line.substr(q1 + 1, q2 - q1 - 1), line.substr(q3 + 1, q4 - q3 - 1) };
     }
 }
@@ -75,7 +82,24 @@ static std::string Label(int setting, uint32_t screenW, uint32_t screenH, bool f
 {
     const video::PictureFit fit = video::FitPicture(screenW, screenH, 1280.0f, 720.0f, fill, fill);
     const uint32_t w = uint32_t(fit.width), h = uint32_t(fit.height);
-    const RenderScale scale = setting > 0 ? video::NativeShape(gpu::AxisFromHalves(uint32_t(setting)), w, h) : video::AutoNativeScale(w, h, budget);
+    // (The renderer's SettingScale: eighths, or an axis each above kResolutionAxes.)
+    RenderScale scale = video::AutoNativeScale(w, h, budget);
+    if (setting > 0)
+    {
+        gpu::AxisScale x, y;
+        if (setting >= (1 << 8))
+        {
+            gpu::AxisFromEighths(uint32_t(setting) >> 8 & 0xFF, x);
+            gpu::AxisFromEighths(uint32_t(setting) & 0xFF, y);
+        }
+        else
+        {
+            gpu::AxisFromEighths(uint32_t(setting), x);
+            y = x;
+        }
+        const RenderScale s{ x, y };
+        scale = s.x.Below() ? s : video::NativeShapeAxes(s, w, h);
+    }
     return video::ResolutionLabel(s_entries[setting].label, scale);
 }
 
@@ -100,7 +124,8 @@ int main(int argc, char** argv)
     }
     ReadEntries(Read(argv[1]));
     // The settings file's values are unchanged: only the labels moved.
-    const std::map<int, const char*> tokens = { { 0, "auto" }, { 2, "1x" }, { 3, "1.5x" }, { 4, "2x" }, { 6, "3x" } };
+    const std::map<int, const char*> tokens = { { 0, "auto" }, { 4, "0.5x" }, { 5, "0.625x" }, { 6, "0.75x" }, { 8, "1x" },
+        { (12 << 8) | 8, "1.5x1" }, { (8 << 8) | 12, "1x1.5" }, { 12, "1.5x" }, { 16, "2x" }, { 24, "3x" }, { 32, "4x" } };
     CHECK(s_entries.size() == tokens.size(), "%zu entries", s_entries.size());
     for (const auto& [v, token] : tokens)
         CHECK(s_entries.count(v) && s_entries[v].token == token, "entry %d's token \"%s\", want \"%s\"", v, s_entries[v].token.c_str(), token);
@@ -111,20 +136,23 @@ int main(int argc, char** argv)
 
     // 16:9.
     Expect("16:9", 1920, 1080, true, 6,
-        { { 2, "1x (1280x720)" }, { 3, "1.5x (1920x1080)" }, { 4, "2x (2560x1440)" }, { 6, "3x (3840x2160)" }, { 0, "Auto (2560x1440)" } });
-    Expect("16:9 1440p", 2560, 1440, true, 6, { { 2, "1x (1280x720)" }, { 0, "Auto (2560x1440)" } });
+        { { 8, "1x (1280x720)" }, { 12, "1.5x (1920x1080)" }, { 16, "2x (2560x1440)" }, { 24, "3x (3840x2160)" }, { 0, "Auto (2560x1440)" } });
+    Expect("16:9 1440p", 2560, 1440, true, 6, { { 8, "1x (1280x720)" }, { 0, "Auto (2560x1440)" } });
     // 16:10 filled: a Steam Deck (an integrated GPU's budget, 4), a 16:10 Mac.
     Expect("16:10 Fill Screen (Steam Deck)", 1280, 800, true, 4,
-        { { 2, "1x (1280x800)" }, { 3, "1.5x (1920x1200)" }, { 4, "2x (2560x1600)" }, { 6, "3x (3840x2400)" }, { 0, "Auto (1280x800)" } });
-    Expect("16:10 Fill Screen", 1920, 1200, true, 6, { { 2, "1x (1280x800)" }, { 3, "1.5x (1920x1200)" } });
+        { { 8, "1x (1280x800)" }, { 12, "1.5x (1920x1200)" }, { 16, "2x (2560x1600)" }, { 24, "3x (3840x2400)" }, { 0, "Auto (1280x800)" } });
+    Expect("16:10 Fill Screen", 1920, 1200, true, 6, { { 8, "1x (1280x800)" }, { 12, "1.5x (1920x1200)" } });
     // 16:10 with Aspect Ratio 16:9: the 16:9 box.
     Expect("16:10 Aspect 16:9 (Steam Deck)", 1280, 800, false, 4,
-        { { 2, "1x (1280x720)" }, { 3, "1.5x (1920x1080)" }, { 4, "2x (2560x1440)" }, { 0, "Auto (1280x720)" } });
+        { { 8, "1x (1280x720)" }, { 12, "1.5x (1920x1080)" }, { 16, "2x (2560x1440)" }, { 0, "Auto (1280x720)" } });
     // 21:9 (Hor+): its own columns.
     Expect("21:9", 3440, 1440, true, 6,
-        { { 2, "1x (1720x720)" }, { 3, "1.5x (2580x1080)" }, { 4, "2x (3440x1440)" }, { 6, "3x (5160x2160)" }, { 0, "Auto (3440x1440)" } });
+        { { 8, "1x (1720x720)" }, { 12, "1.5x (2580x1080)" }, { 16, "2x (3440x1440)" }, { 24, "3x (5160x2160)" }, { 0, "Auto (3440x1440)" } });
     // 21:9 with Aspect Ratio 16:9: its 16:9 box (2560x1440).
-    Expect("21:9 Aspect 16:9", 3440, 1440, false, 6, { { 2, "1x (1280x720)" }, { 0, "Auto (2560x1440)" } });
+    Expect("21:9 Aspect 16:9", 3440, 1440, false, 6, { { 8, "1x (1280x720)" }, { 0, "Auto (2560x1440)" } });
+
+    // One axis at 1.5x: the picture's own rows or columns on the other.
+    Expect("16:9 one axis", 1920, 1080, true, 6, { { (12 << 8) | 8, "1.5x wide only (1920x720)" }, { (8 << 8) | 12, "1.5x tall only (1280x1080)" } });
 
     // The menu shows these (its value text and the column's width), and the
     // renderer's scale for a label is the one it renders with.
@@ -137,7 +165,7 @@ int main(int argc, char** argv)
         "InternalResolutionScale isn't WantedRenderScale");
     // WantedRenderScale is the test's composition: NativeShape for a
     // setting, NativeAuto over AutoRenderScale (AutoNativeScale) for Auto.
-    CHECK(renderer.find("return s_nativeShape ? video::NativeShape(a, regionW, regionH)") != std::string::npos, "a setting's scale moved");
+    CHECK(renderer.find("return s_nativeShape && !s.x.Below() ? video::NativeShapeAxes(s, regionW, regionH) : s;") != std::string::npos, "a setting's scale moved");
     CHECK(renderer.find("return s_nativeShape ? video::NativeAuto(sx, sy, regionW, regionH, s_scaleBudget)") != std::string::npos, "Auto's scale moved");
 
     printf(g_failures ? "%d FAILED\n" : "resolution labels OK\n", g_failures);

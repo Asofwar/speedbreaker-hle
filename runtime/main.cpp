@@ -752,8 +752,7 @@ int main(int argc, char** argv)
             if (!region::Available(release))
             {
                 fprintf(stderr, "[runtime] %s is the %.*s release's default.xex, and this build has no recompiled code "
-                    "for it (built without ppc-pal-es/)
-", xexPath.string().c_str(), int(known->regionName.size()),
+                    "for it (built without ppc-pal-es/)\n", xexPath.string().c_str(), int(known->regionName.size()),
                     known->regionName.data());
                 return 1;
             }
