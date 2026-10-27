@@ -8311,7 +8311,14 @@ void main()
         // would (a fault: the write watch asks for them and waits) and logs
         // what it found ([defer-check]: words whose stencil byte isn't 0 were
         // never a depth resolve's).
-#if defined(__linux__) && defined(__x86_64__)
+        // Also on by default on Android, with what follows it (the colour
+        // deferral, LAZY, RENAME, PRESENT): Turnip on an Adreno 840 (OnePlus,
+        // SM8850), the race at 1x, 3 alternated pairs: 71.0 -> 78.4 fps
+        // (median), GPU busy 14.09 -> 12.76 ms a frame, the command processor
+        // 10.27 -> 9.42 ms; the trace hash the same, the 5 shots within
+        // compare_shots --strict, and the checks (DEFER_COLOR=2, LAZY=2):
+        // 3.0e9 words, none differ, depth exact.
+#if defined(__linux__) && (defined(__x86_64__) || defined(__ANDROID__))
         constexpr int kResolveDeferDefault = 1;
 #else
         constexpr int kResolveDeferDefault = 0;
