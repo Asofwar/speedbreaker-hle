@@ -30,6 +30,30 @@ namespace hostcpu
             return value;
         }
 
+        // The physical core a CPU is on: the first CPU of its core's list (its
+        // SMT siblings on x86). core_id alone isn't one: ARM numbers it within
+        // the cluster, so on an SM8850 (a OnePlus phone) cpu 1 (a 3.6 GHz core)
+        // and cpu 6 (a 4.6 GHz one) both read 1, and the command processor's
+        // reserved core was both. Kernels without the lists: package and
+        // core_id.
+        uint64_t PhysicalCore(int cpu)
+        {
+            for (const char* file : { "topology/core_cpus_list", "topology/thread_siblings_list" })
+            {
+                char path[96];
+                snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/%s", cpu, file);
+                if (FILE* f = fopen(path, "r"))
+                {
+                    unsigned first = 0;
+                    const bool ok = fscanf(f, "%u", &first) == 1;
+                    fclose(f);
+                    if (ok)
+                        return first;
+                }
+            }
+            return 1ull << 63 | ReadCpuValue(cpu, "topology/physical_package_id") << 32 | ReadCpuValue(cpu, "topology/core_id");
+        }
+
         std::string CpuList(const cpu_set_t& set)
         {
             std::string list;
@@ -65,9 +89,7 @@ namespace hostcpu
             read.clear();
             for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
                 if (CPU_ISSET(cpu, &allowed))
-                    read.push_back({ cpu, ReadCpuValue(cpu, file),
-                        ReadCpuValue(cpu, "topology/physical_package_id") << 32 | ReadCpuValue(cpu, "topology/core_id"),
-                        ReadCpuValue(cpu, "cpu_capacity") });
+                    read.push_back({ cpu, ReadCpuValue(cpu, file), PhysicalCore(cpu), ReadCpuValue(cpu, "cpu_capacity") });
             if (std::all_of(read.begin(), read.end(), [](const Cpu& c) { return c.speed == 0; }))
                 continue;
             cpus = read;
