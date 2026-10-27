@@ -38,6 +38,9 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#ifdef __ANDROID__
+#include <SDL3/SDL_system.h>
+#endif
 
 extern "C" PPC_FUNC(__imp__sub_82528448);
 extern "C" PPC_FUNC(__imp__sub_82420FC0);
@@ -60,6 +63,38 @@ namespace
     std::mutex g_statusMutex;
     std::string g_status = "Multiplayer is off.";
     std::vector<game::MpPlayer> g_players;
+
+    // Android 17 (API 37) keeps an app off the local network (a UDP send fails with EPERM) until the user allows "Nearby devices" (ACCESS_LOCAL_NETWORK).
+    // It is asked for when multiplayer first connects, and again after another server is chosen; the connection waits for the answer. A server on the
+    // internet works either way. Older systems have no such permission.
+    enum : int { kLanUnasked, kLanAsking, kLanGranted, kLanDenied };
+    std::atomic<int> g_lanAccess{ kLanUnasked };
+    constexpr const char* kLanDeniedText = "Multiplayer may not use the local network: allow Nearby devices in Settings > Apps > SpeedBreaker > Permissions.";
+
+    // false while the question is on screen
+    bool LanAccessAnswered()
+    {
+#ifdef __ANDROID__
+        if (g_lanAccess.load() == kLanUnasked)
+        {
+            if (SDL_GetAndroidSDKVersion() < 37)
+                g_lanAccess = kLanGranted;
+            else
+            {
+                g_lanAccess = kLanAsking;
+                auto answered = [](void*, const char*, bool granted) {   // (any thread; at once when it was allowed before)
+                    g_lanAccess = granted ? kLanGranted : kLanDenied;
+                    fprintf(stderr, "[mp] local network access %s\n", granted ? "allowed" : "denied");
+                };
+                if (!SDL_RequestAndroidPermission("android.permission.ACCESS_LOCAL_NETWORK", answered, nullptr))
+                    g_lanAccess = kLanDenied;
+            }
+        }
+        return g_lanAccess.load() != kLanAsking;
+#else
+        return true;
+#endif
+    }
 
     // Chat: lines to send (from the settings page), and the latest lines received, with when (steady clock seconds) for the overlay.
     std::mutex g_chatMutex;
@@ -204,6 +239,7 @@ namespace
         std::unique_ptr<mp::Client> net;
         std::string server, name = "player";
         double lastSend = 0, lastTry = 0, lastStatus = -10;
+        bool lanDeniedShown = false;
         double lastSkins = 0;
         uint32_t sentSkinAt = 0;   // the address of the skin this game sent last (a new one, a new race: sent again)
         // Start barrier (NFSMW_MP_PLAYERS=n, n > 1): the race is held, world frozen, from the moment it appears until n-1 other players are there and ready too.
@@ -271,6 +307,11 @@ namespace
             if (wanted != server)
             {
                 server = wanted;
+                if (g_lanAccess.load() == kLanDenied)   // another server: ask again
+                {
+                    g_lanAccess = kLanUnasked;
+                    lanDeniedShown = false;
+                }
                 if (net)
                 {
                     net->Disconnect();
@@ -710,6 +751,14 @@ namespace
             return;
         }
 
+        if (!LanAccessAnswered())
+            return;
+        if (g_lanAccess.load() == kLanDenied && !a.lanDeniedShown)
+        {
+            a.lanDeniedShown = true;
+            ui::Toast(kLanDeniedText, 20.0);
+        }
+
         // The connection: made as soon as multiplayer is on and kept between races, so that the players present and their cars are known before a race is created.
         uint16_t port;
         if (!a.net)
@@ -1088,9 +1137,9 @@ namespace game
                 if (a.server.empty())
                     text = "Multiplayer is off.";
                 else if (!a.net)
-                    text = "On. Connecting...";
+                    text = g_lanAccess.load() == kLanAsking ? "Waiting for the local network permission." : "On. Connecting...";
                 else if (a.net->Failed())
-                    text = "Cannot reach " + a.server + ", retrying.";
+                    text = g_lanAccess.load() == kLanDenied ? std::string(kLanDeniedText) : "Cannot reach " + a.server + ", retrying.";
                 else if (!a.net->Connected())
                     text = "Connecting to " + a.server + "...";
                 else

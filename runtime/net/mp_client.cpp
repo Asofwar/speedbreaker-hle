@@ -2,7 +2,10 @@
 #include <enet/enet.h>
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <deque>
 #include <mutex>
 
@@ -82,6 +85,7 @@ namespace mp
         ENetPeer* peer = nullptr;
         std::string name;
         bool welcome = false, failed = false;
+        bool socketErrorLogged = false;
         uint8_t myId = 0;
         uint64_t myCarKey = 0;
         bool myReady = false;
@@ -124,6 +128,9 @@ namespace mp
         ENetAddress a{};
         if (!m->host || enet_address_set_host(&a, hostName.c_str()) != 0) return false;
         a.port = port;
+        char ip[64] = "?";
+        enet_address_get_host_ip(&a, ip, sizeof(ip));
+        fprintf(stderr, "[mp] %s resolves to %s:%u\n", hostName.c_str(), ip, unsigned(port));
         m->peer = enet_host_connect(m->host, &a, kChannels, 0);
         m->name = name;
         m->welcome = m->failed = false;
@@ -152,7 +159,8 @@ namespace mp
     {
         if (!m->host) return;
         ENetEvent ev;
-        while (enet_host_service(m->host, &ev, 0) > 0)
+        int got;
+        while ((got = enet_host_service(m->host, &ev, 0)) > 0)
         {
             if (ev.type == ENET_EVENT_TYPE_CONNECT)
             {
@@ -339,6 +347,12 @@ namespace mp
                 }
                 enet_packet_destroy(ev.packet);
             }
+        }
+        // A socket that cannot send (no route, a firewall) otherwise only shows as a connection that times out.
+        if (got < 0 && !m->socketErrorLogged)
+        {
+            m->socketErrorLogged = true;
+            fprintf(stderr, "[mp] socket error: %s (errno %d)\n", strerror(errno), errno);
         }
     }
 

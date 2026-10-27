@@ -9,6 +9,8 @@
 
     <!-- Online play and multiplayer (UDP), the update check. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- A multiplayer server on the local network (Android 17 keeps apps off it until the user allows "Nearby devices"). -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- A gamepad's rumble through SDL. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
