@@ -23,6 +23,7 @@
 #include "cp_doorbell.h"
 #include <kernel/write_watch.h>
 #include <debug/timeline.h>
+#include <debug/cp_sampler.h>
 #include <debug/bench.h>
 #include <report/report.h>
 #include <unordered_set>
@@ -1300,6 +1301,7 @@ namespace gpu
             writewatch::t_gpuThread = true;
             renderer::t_commandProcessor = true;
             SetHostThreadName("nfsmw-cp");
+            cpsampler::StartForCurrentThread();  // NFSMW_CP_SAMPLE (Windows)
             // Dense scenes are limited by this thread. On the Steam Machine the
             // scheduler left it on a 3.5 GHz core, or on the sibling of a
             // spinning game thread, while those held the 4.8 GHz cores.
