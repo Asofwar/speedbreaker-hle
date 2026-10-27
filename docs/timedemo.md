@@ -316,8 +316,10 @@ draws are those of a run without shots.
 The usual build (README.md) compiles each source file on its own and lays
 out each function by the compiler's guesses of which way its branches go.
 Three options of the top-level `CMakeLists.txt` do better, on Linux (SteamOS
-bundles included). All are off by default, and without them the build is
-the usual one:
+bundles included) and Android; ThinLTO also on Windows (the clang cross-build,
+`SB_CMAKE_ARGS=-DSB_LTO=ON scripts/windows/build.sh`). All are off by default,
+and without them the build is the usual one (`scripts/steamos/release_hle.sh`
+makes its Linux and Windows downloads with ThinLTO):
 
 | CMake option | What |
 |---|---|
@@ -366,7 +368,11 @@ thread ran in the window, read from `/proc`, per frame):
 
 The pictures pass the strict check against the usual build's (capped runs:
 at most 2 levels apart). ThinLTO alone gave +0.4% fps and 1% less CPU on the
-guest's threads.
+guest's threads. On Windows (a PC with an i9-14900K and an RTX 5080, where the
+command processor bounds the race: 1800 steps from 1530, uncapped, 3
+alternated pairs) ThinLTO gave 224.0 -> 226.7 fps (+1.2%, every pair), the
+command processor 4.27 -> 4.23 ms a frame, the same trace hash. On Android
+(Turnip on an Adreno 840, GPU-bound) it changed nothing measurable.
 
 Notes:
 

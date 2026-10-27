@@ -199,9 +199,14 @@ else()
     #     those again.
     option(SB_PGO_GENERATE "An instrumented build that writes a profile for SB_PGO_PROFILE (Linux, Android; scripts/pgo_train.sh)" OFF)
     set(SB_PGO_PROFILE "" CACHE FILEPATH "A profile from scripts/pgo_train.sh (.profdata) to optimise the game's code with (Linux, Android)")
-    option(SB_LTO "ThinLTO for the game's code, linked with lld (Linux, Android)" OFF)
-    if((SB_PGO_GENERATE OR SB_PGO_PROFILE OR SB_LTO) AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID))
-        message(FATAL_ERROR "SB_PGO_GENERATE, SB_PGO_PROFILE and SB_LTO are for Linux and Android builds only")
+    option(SB_LTO "ThinLTO for the game's code, linked with lld (Linux, Android, Windows with clang)" OFF)
+    if((SB_PGO_GENERATE OR SB_PGO_PROFILE) AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID))
+        message(FATAL_ERROR "SB_PGO_GENERATE and SB_PGO_PROFILE are for Linux and Android builds only")
+    endif()
+    # Windows: the MinGW cross-build (scripts/windows/mingw-toolchain.cmake) is
+    # clang and lld, which take ThinLTO; MSVC and GCC don't take these flags.
+    if(SB_LTO AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID OR (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")))
+        message(FATAL_ERROR "SB_LTO is for Linux, Android and Windows builds with clang only")
     endif()
     if(SB_PGO_GENERATE AND SB_PGO_PROFILE)
         message(FATAL_ERROR "SB_PGO_GENERATE (training) or SB_PGO_PROFILE (the optimised build), not both")

@@ -9,6 +9,7 @@
 # scripts/windows/deps.sh <deps prefix>. The build dir defaults to
 # build-windows. The game is one static .exe: next to it it needs only the
 # graphics driver's vulkan-1.dll, which Windows has with any Vulkan driver.
+# SB_CMAKE_ARGS: more CMake options (for example -DSB_LTO=ON, ThinLTO).
 set -euo pipefail
 [ $# -ge 1 ] || { echo "usage: $0 <deps prefix> [build dir]" >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -16,7 +17,7 @@ DEPS="$(cd "$1" && pwd)"
 BUILD="${2:-$ROOT/build-windows}"
 cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$ROOT/scripts/windows/mingw-toolchain.cmake" \
     -DSB_WIN_DEPS="$DEPS" -DCMAKE_BUILD_TYPE=Release -DFFMPEG_XMA="$DEPS/ffmpeg-xma" -DCMAKE_PREFIX_PATH="$DEPS" \
-    -DVulkan_INCLUDE_DIR="$DEPS/include" -DVulkan_LIBRARY="$DEPS/lib/libvulkan-1.a" > "$BUILD.configure.log" ||
+    -DVulkan_INCLUDE_DIR="$DEPS/include" -DVulkan_LIBRARY="$DEPS/lib/libvulkan-1.a" ${SB_CMAKE_ARGS:-} > "$BUILD.configure.log" ||
     { tail -30 "$BUILD.configure.log" >&2; exit 1; }
 ninja -C "$BUILD" SpeedBreaker mp_server
 echo "build.sh: $BUILD/runtime/SpeedBreaker.exe"

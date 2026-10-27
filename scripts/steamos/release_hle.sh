@@ -19,6 +19,11 @@
 # GLIBC_2.44 and GLIBCXX_3.4.36 at most (make_bundle.sh's line says so); the
 # check below refuses a build that needs more than those libraries give.
 #
+# Both are ThinLTO builds (docs/timedemo.md, Faster builds): the build dir is
+# configured with -DSB_LTO=ON and built here, and the Windows one gets it too
+# (on the PC's RTX 5080, 3 alternated pairs: 224.0 -> 226.7 fps uncapped, the
+# command processor -1%, the trace hash the same).
+#
 # Without --publish it only makes the files, in dist/<tag>/. With it, it also
 # creates the GitHub release <tag> (gh, logged in) with them and its notes
 # (dist/<tag>/notes.md: the fork's section of README.md and the commits since
@@ -45,6 +50,8 @@ VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$BUILD/CMakeCache.txt")
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release_hle.sh: no version in $BUILD/CMakeCache.txt" >&2; exit 1; }
 FORK="$(sed -n 's/.*kForkRevision\[\] = "\(.*\)";.*/\1/p' runtime/update/check.h)"
 [ "$TAG" = "v$VERSION-$FORK" ] || { echo "release_hle.sh: the tag must be v$VERSION-$FORK (runtime/update/check.h's kForkRevision), not $TAG" >&2; exit 1; }
+cmake -S "$ROOT" -B "$BUILD" -DSB_LTO=ON > /dev/null
+ninja -C "$BUILD" SpeedBreaker mp_server
 OUT="$ROOT/dist/$TAG"
 rm -rf "$OUT"
 mkdir -p "$OUT/up"
@@ -107,7 +114,7 @@ cp "$OUT/up/SpeedBreaker-$VERSION-third-party-source.tar.xz" "$OUT/"
 (cd "$OUT" && for f in SpeedBreaker-steamos-x86_64.tar.xz "SpeedBreaker-$VERSION-third-party-source.tar.xz"; do sha256sum "$f" > "$f.sha256"; done)
 ASSETS=("$OUT/SpeedBreaker-steamos-x86_64.tar.xz" "$OUT/SpeedBreaker-steamos-x86_64.tar.xz.sha256")
 if [ -n "$WIN_DEPS" ]; then
-    scripts/windows/build.sh "$WIN_DEPS" "$ROOT/build-windows"
+    SB_CMAKE_ARGS="-DSB_LTO=ON ${SB_CMAKE_ARGS:-}" scripts/windows/build.sh "$WIN_DEPS" "$ROOT/build-windows"
     scripts/windows/package.sh "$WIN_DEPS" "$ROOT/build-windows" "$OUT/windows"
     cp "$OUT/windows/SpeedBreaker-windows-x86_64.zip" "$OUT/windows/SpeedBreaker-windows-x86_64.zip.sha256" "$OUT/"
     ASSETS+=("$OUT/SpeedBreaker-windows-x86_64.zip" "$OUT/SpeedBreaker-windows-x86_64.zip.sha256")
