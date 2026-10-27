@@ -197,11 +197,11 @@ else()
     #     builds' timedemo replays of the default race go out of step where
     #     the intro ends more often than others' (docs/timedemo.md): replay
     #     those again.
-    option(SB_PGO_GENERATE "An instrumented build that writes a profile for SB_PGO_PROFILE (Linux; scripts/pgo_train.sh)" OFF)
-    set(SB_PGO_PROFILE "" CACHE FILEPATH "A profile from scripts/pgo_train.sh (.profdata) to optimise the game's code with (Linux)")
-    option(SB_LTO "ThinLTO for the game's code, linked with lld (Linux)" OFF)
-    if((SB_PGO_GENERATE OR SB_PGO_PROFILE OR SB_LTO) AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        message(FATAL_ERROR "SB_PGO_GENERATE, SB_PGO_PROFILE and SB_LTO are for Linux builds only")
+    option(SB_PGO_GENERATE "An instrumented build that writes a profile for SB_PGO_PROFILE (Linux, Android; scripts/pgo_train.sh)" OFF)
+    set(SB_PGO_PROFILE "" CACHE FILEPATH "A profile from scripts/pgo_train.sh (.profdata) to optimise the game's code with (Linux, Android)")
+    option(SB_LTO "ThinLTO for the game's code, linked with lld (Linux, Android)" OFF)
+    if((SB_PGO_GENERATE OR SB_PGO_PROFILE OR SB_LTO) AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID))
+        message(FATAL_ERROR "SB_PGO_GENERATE, SB_PGO_PROFILE and SB_LTO are for Linux and Android builds only")
     endif()
     if(SB_PGO_GENERATE AND SB_PGO_PROFILE)
         message(FATAL_ERROR "SB_PGO_GENERATE (training) or SB_PGO_PROFILE (the optimised build), not both")

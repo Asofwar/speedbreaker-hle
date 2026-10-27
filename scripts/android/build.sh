@@ -12,6 +12,8 @@
 #   cd android && ./gradlew assembleRelease -PsbNative=<output folder>
 # which writes android/build/outputs/apk/release/SpeedBreaker-release.apk.
 #
+# SB_CMAKE_ARGS: more CMake options for a new build folder (for example
+# -DSB_LTO=ON, ThinLTO; docs/timedemo.md, Faster builds).
 # Needs ANDROID_DEPS (scripts/android/build_deps.sh's folder), the NDK
 # (ANDROID_NDK, default /opt/android-ndk-r29: r28 or later, for libc++'s
 # std::atomic_ref) and ppc/ (scripts/recompile.sh from your own default.xex).
@@ -32,7 +34,7 @@ if [ ! -f "$BUILD/build.ninja" ]; then
         -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33 \
         -DANDROID_STL=c++_static -DCMAKE_FIND_ROOT_PATH="$PREFIX" \
         -DSDL3_DIR="$PREFIX/lib/cmake/SDL3" -Dglslang_DIR="$PREFIX/lib/cmake/glslang" -DFFMPEG_XMA="$PREFIX" \
-        -DSB_ANDROID_DEPS="$PREFIX"
+        -DSB_ANDROID_DEPS="$PREFIX" ${SB_CMAKE_ARGS:-}
 fi
 ninja -C "$BUILD" -j"$JOBS" SpeedBreaker
 
