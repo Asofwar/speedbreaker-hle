@@ -6,6 +6,7 @@
 
 #include <game/timedemo.h>
 #include <hid/input.h>
+#include <hid/touch.h>       // the touch controls (drawn by touch_overlay.cpp)
 #include <hid/wheel.h>       // the settings chord and the menus from a steering wheel
 #include <hid/wheel_map.h>   // ...which buttons those are
 #include <kernel/xam.h>
@@ -260,8 +261,9 @@ namespace ui
         // if a second finger lands in time it is dropped, with the rest of
         // that finger's mouse events, so the tap that closes the menu presses
         // nothing in it. Under a modal (the installer) the tap does nothing,
-        // so nothing waits there. (The game never sees a touch: it reads
-        // controllers and the keyboard only.)
+        // so nothing waits there. (The game sees a touch only through the
+        // touch controls, hid/touch.h, which take the finger events
+        // themselves.)
         std::vector<SDL_Event> s_heldPress;
         // When ui::Tick ran, just before this frame's events were polled
         // (SDL ticks; main thread).
@@ -1091,7 +1093,8 @@ namespace ui
             toastText = CurrentToastLocked();
         }
         bool toast = !toastText.empty();
-        if (!s_modal && !s_settingsOpen && !perf && !toast && !game::MpHudActive())
+        const bool touch = !s_modal && !s_settingsOpen && hid::touch::Visible();
+        if (!s_modal && !s_settingsOpen && !perf && !toast && !game::MpHudActive() && !touch)
             return false;
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -1159,6 +1162,8 @@ namespace ui
         }
         if (!s_modal)
             DrawMpOverlay();
+        if (touch)
+            DrawTouchControls();
         if (toast)
             DrawToast(toastText);
         ImGui::Render();

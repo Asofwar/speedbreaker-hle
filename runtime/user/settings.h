@@ -84,6 +84,15 @@ namespace settings
         StickDeadzone,
         TriggerDeadzone,
         Vibration,
+        // Touch (the [touch] table): the on-screen controls (hid/touch.h). The
+        // page shows itself only where there is a touchscreen.
+        TouchControls,     // TouchControlsMode
+        TouchSteering,     // TouchSteeringMode
+        TouchAutoGas,
+        TouchGestures,     // the menus' tap, two-finger tap and swipes
+        TouchSize,         // the controls' size, %
+        TouchOpacity,      // %
+        TiltSensitivity,   // degrees of tilt for full lock
         // Wheel (the [wheel] table): a USB steering wheel as the pad
         // (hid/wheel_map.h). The page shows itself only while one is
         // connected; the four axis options are hidden, and hold what
@@ -166,7 +175,7 @@ namespace settings
     // Key: a key code of user/key_names.h (0: no key), saved by its name
     // there ("w", "left_shift", "none"); the menu takes it from a key press.
     enum class Type : uint8_t { Bool, Int, Float, Enum, Key };
-    enum class Category : uint8_t { Display, Graphics, Audio, Input, Wheel, Controls, Online, Game, Advanced, Count };
+    enum class Category : uint8_t { Display, Graphics, Audio, Input, Touch, Wheel, Controls, Online, Game, Advanced, Count };
     enum class Apply : uint8_t { Live, Restart };
 
     // Values of the enum options (GetInt returns them).
@@ -227,6 +236,13 @@ namespace settings
         Original = 0,
         Pcss = 1,
     };
+
+    // Touch > Touch Controls: never, while no controller (a gamepad or a
+    // wheel) is connected, or always.
+    enum class TouchControlsMode : int32_t { Off = 0, Auto = 1, On = 2 };
+    // Touch > Steering: two buttons, the phone's tilt, or a stick where the
+    // finger lands (hid/touch_layout.h's Steering has the same values).
+    enum class TouchSteeringMode : int32_t { Buttons = 0, Tilt = 1, Stick = 2 };
 
     struct EnumEntry
     {

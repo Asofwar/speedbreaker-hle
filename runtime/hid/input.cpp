@@ -5,6 +5,7 @@
 #include "key_map.h"
 #include "player_slots.h"
 #include "rumble_note.h"
+#include "touch.h"
 #include "wheel.h"
 #include <cpu/guest_time.h>
 #include <game/timedemo.h>
@@ -1095,6 +1096,7 @@ namespace hid
     void HandleEvent(const SDL_Event& e)
     {
         wheel::HandleEvent(e);  // a wheel coming or going
+        touch::HandleEvent(e);  // fingers on the touch controls (hid/touch.h)
         if (e.type == SDL_EVENT_GAMEPAD_ADDED)
         {
             OpenFirstGamepad();
@@ -1157,6 +1159,7 @@ namespace hid
         for (OtherPad& o : s_others)
             SDL_RumbleGamepad(o.gamepad, 0, 0, 0);
         wheel::Suspend();
+        touch::Release();  // no finger holds a control through it
     }
 
     void Resume()
@@ -1265,6 +1268,10 @@ namespace hid
             if (r.axisSet[size_t(keymap::Axis::LX)])
                 lxFromWheel = false;
         }
+        // The touch controls (Settings > Touch, hid/touch.h): another controller 0
+        // on the screen, which replaces what it steers or presses, as the keyboard does.
+        if (touch::Contribute(s_gamepad != nullptr || onWheel, p.buttons, lx, ly, lt, rt))
+            lxFromWheel = false;
         p.lx = ToShort(lx);
         p.ly = ToShort(ly);
         p.rx = ToShort(rx);

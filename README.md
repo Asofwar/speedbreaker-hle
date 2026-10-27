@@ -583,6 +583,18 @@ game while its window isn't in front.
 **Input:** Stick Deadzone (8%; raise it if the car steers by itself), Trigger Deadzone (2%), and
 Vibration (On).
 
+**Touch** (shown where there is a touchscreen: Android, a Steam Deck, a PC's): Touch Controls
+(Auto: on the screen while no controller or wheel is connected, and on a PC while there is no
+keyboard either; On; Off), Steering (Buttons, Tilt or
+Stick), Auto Gas (Off; On: full throttle unless you brake, and the gas button becomes nitrous),
+Menu Gestures (On), Button Size (100%), Button Opacity (50%), and Tilt for Full Lock (25
+degrees). While you drive the screen has the steering on the left and gas, brake, nitrous, the
+handbrake and Speedbreaker on the right, with the rear view, the camera, the reset after a crash
+and the pause along the top, as the game's own Controls page sets them; in the game's menus,
+the pause menu and the map it has a D-pad, A B X Y, LB RB LT RT, Start and Back. In the menus a
+tap is A, a two-finger tap B, and a swipe the D-pad. MENU (top left) opens these settings, as a
+three-finger tap does.
+
 **Wheel** (experimental; shown while a steering wheel is plugged in): Steering Wheel (On; Off
 lets a controller or the keyboard play while the wheel stays plugged in), Steering Range (360
 degrees lock to lock, of a G29's 900), Invert Steering, Steering Deadzone (0%), Steering Response

@@ -20,6 +20,7 @@
 #include <online/online.h>
 #include <user/settings.h>
 #include <hid/key_map.h>     // the Controls page: one row per control, two keys each
+#include <hid/touch.h>       // the Touch page: shown where there is a touchscreen
 #include <hid/wheel.h>       // the Wheel page: the device, its pedals and what they read
 #include <user/key_names.h>  // a key's name in the file, when SDL has none
 #include <video/frame_rate.h>
@@ -107,6 +108,8 @@ namespace ui
         {
             if (c == Category::Wheel)
                 return hid::wheel::Found();
+            if (c == Category::Touch)  // where there is a touchscreen (hid/touch.h)
+                return hid::touch::ScreenPresent();
             if (c == Category::Game)  // Language isn't shown on iPhone and iPad; the cheats' rows always are
                 return true;
 #if defined(__APPLE__) && TARGET_OS_IOS

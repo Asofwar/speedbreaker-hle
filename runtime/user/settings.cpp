@@ -175,6 +175,18 @@ namespace settings
             { 32, "4x", "4x" },
         };
 
+        constexpr EnumEntry kTouchControlsEntries[] = {
+            { int32_t(TouchControlsMode::Off), "off", "Off" },
+            { int32_t(TouchControlsMode::Auto), "auto", "Auto" },
+            { int32_t(TouchControlsMode::On), "on", "On" },
+        };
+
+        constexpr EnumEntry kTouchSteeringEntries[] = {
+            { int32_t(TouchSteeringMode::Buttons), "buttons", "Buttons" },
+            { int32_t(TouchSteeringMode::Tilt), "tilt", "Tilt" },
+            { int32_t(TouchSteeringMode::Stick), "stick", "Stick" },
+        };
+
         constexpr EnumEntry kShadowFilteringEntries[] = {
             { int32_t(ShadowFilteringMode::Original), "original", "Original" },
             { int32_t(ShadowFilteringMode::Pcss), "pcss", "Soft (PCSS)" },
@@ -479,6 +491,36 @@ namespace settings
               .table = "input", .key = "vibration", .label = "Vibration",
               .description = "Controller rumble, and the knocks a steering wheel's force feedback passes on (Settings > Wheel).",
               .env = "NFSMW_VIBRATION", .defaultValue = 1 },
+            // Touch (Settings > Touch; hid/touch.cpp reads them). The page
+            // shows only where there is a touchscreen.
+            { .id = Id::TouchControls, .category = Category::Touch, .type = Type::Enum, .apply = Apply::Live,
+              .table = "touch", .key = "controls", .label = "Touch Controls",
+              .description = "Buttons on the screen to drive and to work the game's menus. Auto: while no controller or wheel is connected.",
+              .env = "NFSMW_TOUCH", .defaultValue = double(TouchControlsMode::Auto), .entries = kTouchControlsEntries },
+            { .id = Id::TouchSteering, .category = Category::Touch, .type = Type::Enum, .apply = Apply::Live,
+              .table = "touch", .key = "steering", .label = "Steering",
+              .description = "Buttons: hold left or right, the car steers in a moment. Tilt: turn the device as a wheel. Stick: put a finger down on the left and move it.",
+              .env = "NFSMW_TOUCH_STEERING", .defaultValue = double(TouchSteeringMode::Buttons), .entries = kTouchSteeringEntries },
+            { .id = Id::TouchAutoGas, .category = Category::Touch, .type = Type::Bool, .apply = Apply::Live,
+              .table = "touch", .key = "auto_gas", .label = "Auto Gas",
+              .description = "Full throttle while driving unless you brake. The gas button becomes nitrous.",
+              .env = "NFSMW_TOUCH_AUTO_GAS", .defaultValue = 0 },
+            { .id = Id::TouchGestures, .category = Category::Touch, .type = Type::Bool, .apply = Apply::Live,
+              .table = "touch", .key = "gestures", .label = "Menu Gestures",
+              .description = "In the game's menus: tap to choose (A), tap with two fingers to go back (B), swipe to move (D-pad).",
+              .env = "NFSMW_TOUCH_GESTURES", .defaultValue = 1 },
+            { .id = Id::TouchSize, .category = Category::Touch, .type = Type::Int, .apply = Apply::Live,
+              .table = "touch", .key = "size", .label = "Button Size",
+              .description = "How big the on-screen controls are. 100% is as big as fits the screen.",
+              .env = "NFSMW_TOUCH_SIZE", .defaultValue = 100, .min = 60, .max = 100, .step = 10, .unit = "%" },
+            { .id = Id::TouchOpacity, .category = Category::Touch, .type = Type::Int, .apply = Apply::Live,
+              .table = "touch", .key = "opacity", .label = "Button Opacity",
+              .description = "How visible the on-screen controls are over the game.",
+              .env = "NFSMW_TOUCH_OPACITY", .defaultValue = 50, .min = 20, .max = 100, .step = 10, .unit = "%" },
+            { .id = Id::TiltSensitivity, .category = Category::Touch, .type = Type::Int, .apply = Apply::Live,
+              .table = "touch", .key = "tilt_full_lock", .label = "Tilt for Full Lock",
+              .description = "How far you tilt the device for the car's full lock (Steering: Tilt). Less is quicker.",
+              .env = "NFSMW_TILT_FULL_LOCK", .defaultValue = 25, .min = 10, .max = 60, .step = 5, .unit = " deg" },
             // Wheel (Settings > Wheel; hid/wheel_map.h and hid/wheel.cpp
             // read them). The page shows only while a wheel is connected.
             { .id = Id::Wheel, .category = Category::Wheel, .type = Type::Bool, .apply = Apply::Live,
@@ -1422,6 +1464,7 @@ namespace settings
         case Category::Graphics: return "Graphics";
         case Category::Audio: return "Audio";
         case Category::Input: return "Input";
+        case Category::Touch: return "Touch";
         case Category::Controls: return "Controls";
         case Category::Wheel: return "Wheel";
         case Category::Online: return "Online";

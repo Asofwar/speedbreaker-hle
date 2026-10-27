@@ -108,6 +108,9 @@ namespace ui
     // The open world race over the game (mp_overlay.cpp, game/mp_hud.h):
     // lines, a banner and markers; nothing when there is no race.
     void DrawMpOverlay();
+    // The touch controls over the game (touch_overlay.cpp, hid/touch.h); nothing
+    // while they aren't shown.
+    void DrawTouchControls();
     // Any thread: takes down the toast with this text, showing or waiting
     // its turn, once it no longer holds (a controller connected). None:
     // nothing.

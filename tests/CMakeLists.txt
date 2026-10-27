@@ -539,6 +539,9 @@ target_link_libraries(language_test PRIVATE ${SB_SETTINGS_LIBS})
 target_include_directories(language_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecomp/thirdparty/tomlplusplus/include)
 # The keyboard's controls and how held keys become a pad (hid/key_map.h), header only.
 sb_test(key_map_test)
+# The touch controls' layouts, hit testing, steering, tilt and gestures
+# (hid/touch_layout.h), header only.
+sb_test(touch_layout_test)
 # A USB steering wheel as the pad (hid/wheel_map.h, header only): which
 # joystick is a wheel, which of its axes is the wheel and which are its
 # pedals, the steering curve, the pedals' travel, the buttons and paddles,
