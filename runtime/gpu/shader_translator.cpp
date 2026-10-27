@@ -1569,6 +1569,11 @@ void main()
         // -> render target pixels -> host NDC over the whole target.
         pos.xy = pos.xy * pc.posScale.xy + pc.posScale.zw * pos.w;
     }
+#ifdef SB_FINITE_POSITION
+    // (A check: a vertex at an infinite or NaN position put at the origin.)
+    if (any(isnan(pos)) || any(isinf(pos)))
+        pos = vec4(0.0, 0.0, 0.0, 1.0);
+#endif
     gl_Position = pos;
     gl_PointSize = 1.0;
 }

@@ -100,6 +100,29 @@ if(IOS)
     # On iOS the app is linked and signed by Xcode (scripts/ios): the runtime
     # is a static library there, and the app links it with the rest.
     add_library(SpeedBreaker STATIC ${RUNTIME_SOURCES})
+elseif(ANDROID)
+    # On Android the game is libmain.so, which SDL's Java side
+    # (org.libsdl.app.SDLActivity) loads after libSDL3.so and enters at
+    # SDL_main (main.cpp's main, renamed by SDL_main.h); the APK is
+    # android/'s Gradle project (scripts/android/build.sh).
+    add_library(SpeedBreaker SHARED ${RUNTIME_SOURCES})
+    set_target_properties(SpeedBreaker PROPERTIES OUTPUT_NAME main)
+    target_link_libraries(SpeedBreaker PRIVATE android log)
+    # Its own symbols bound inside it: FFmpeg's AArch64 assembly addresses its
+    # tables (ff_tx_tab_*) PC-relative, which a shared library allows only
+    # for a symbol nothing can interpose. Nothing loads libmain.so to
+    # interpose anything.
+    target_link_options(SpeedBreaker PRIVATE -Wl,-Bsymbolic)
+    # Vulkan through volk's function pointers (VK_NO_PROTOTYPES): the game can
+    # run on a driver of its own instead of the phone's (NFSMW_VK_DRIVER=turnip:
+    # Mesa's Turnip, scripts/android/build_turnip.sh), which libadrenotools
+    # loads into a private copy of the system's Vulkan loader
+    # (video/presenter.cpp, LoadVulkan). SB_ANDROID_DEPS: build_deps.sh's prefix.
+    set(SB_ANDROID_DEPS "" CACHE PATH "scripts/android/build_deps.sh's prefix (volk, libadrenotools)")
+    target_sources(SpeedBreaker PRIVATE ${SB_ANDROID_DEPS}/include/volk/volk.c)
+    target_include_directories(SpeedBreaker PRIVATE ${SB_ANDROID_DEPS}/include/volk ${SB_ANDROID_DEPS}/include)
+    target_link_libraries(SpeedBreaker PRIVATE ${SB_ANDROID_DEPS}/lib/libadrenotools.a ${SB_ANDROID_DEPS}/lib/liblinkernsbypass.a)
+    target_compile_definitions(SpeedBreaker PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_ANDROID_KHR)
 else()
     add_executable(SpeedBreaker ${RUNTIME_SOURCES})
 endif()
@@ -143,6 +166,11 @@ add_library(imgui STATIC ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/img
     ${IMGUI}/backends/imgui_impl_sdl3.cpp ${IMGUI}/backends/imgui_impl_vulkan.cpp)
 target_include_directories(imgui PUBLIC ${IMGUI} ${IMGUI}/backends)
 target_link_libraries(imgui PUBLIC SDL3::SDL3 Vulkan::Vulkan)
+if(ANDROID)
+    # Its Vulkan backend through volk's pointers too (see SpeedBreaker's).
+    target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES IMGUI_IMPL_VULKAN_USE_VOLK)
+    target_include_directories(imgui PRIVATE ${SB_ANDROID_DEPS}/include/volk)
+endif()
 # The UI font, compiled in as a byte array (generated/ui_font.inc).
 file(READ ${IMGUI}/fonts/Roboto-Medium.ttf UI_FONT_HEX HEX)
 string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," UI_FONT_BYTES "${UI_FONT_HEX}")

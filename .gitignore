@@ -32,6 +32,11 @@ out/
 *.ipa
 xcuserdata/
 
+# The Android project's Gradle state and SDK location (android/)
+/android/.gradle/
+/android/local.properties
+/android/.kotlin/
+
 # Third-party tool checkouts (scripts/setup_tools.sh)
 tools/
 /tools

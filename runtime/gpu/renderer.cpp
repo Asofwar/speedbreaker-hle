@@ -61,6 +61,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <source_location>
 #include <thread>
 #ifndef _WIN32
 #include <sys/resource.h>
@@ -1000,6 +1001,7 @@ namespace gpu::renderer
         uint8_t s_passBreakSubmit = 0;            // and, a submit, its site
         const void* s_lastPassTargets[5] = {};    // that pass's colour targets and depth
         void EndPass(PassBreak why = kBreakOther);
+        bool PassActive();
         // NFSMW_RESOLVE_RENAME: a target's image is destroyed: views of it
         // go, and a texture renamed to it samples its own image again.
         void ForgetRenamedImage(VkImage image);
@@ -1806,8 +1808,19 @@ namespace gpu::renderer
                 0, 1, &mb, 0, nullptr, 0, nullptr);
         }
 
-        void ToGeneral(VkImage image, VkImageAspectFlags aspect, uint32_t layers)
+        void ToGeneral(VkImage image, VkImageAspectFlags aspect, uint32_t layers,
+                       std::source_location where = std::source_location::current())
         {
+            // An image barrier is not allowed inside a rendering instance:
+            // desktop drivers let it pass, Adreno's lost the device on it (the
+            // first race scene, 2026-10-27). The pass ends first; the next
+            // draw begins another.
+            if (PassActive())
+            {
+                LogOnce(0x3600 + where.line(), "a new image's layout set inside a pass (renderer.cpp:%u): the pass ends first", unsigned(where.line()));
+                EndPass(kBreakBarrier);
+                Begin();
+            }
             VkImageMemoryBarrier b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
             b.srcAccessMask = 0;
             b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
@@ -2313,6 +2326,24 @@ namespace gpu::renderer
                     fclose(f);
                 }
             }
+            // NFSMW_GLSL_OVERRIDE=<dir>: a <dir>/<vs|ps>_<hash>.glsl there (an
+            // edited NFSMW_DUMP_GLSL file) is compiled instead of the
+            // translation (narrowing down what a GPU's compiler gets wrong).
+            static const char* overrideGlsl = std::getenv("NFSMW_GLSL_OVERRIDE");
+            if (overrideGlsl && slot->info.ok)
+            {
+                const std::string path = std::format("{}/{}_{:016x}.glsl", overrideGlsl, type == 0 ? "vs" : "ps", hash);
+                if (FILE* f = fopen(path.c_str(), "r"))
+                {
+                    std::string text;
+                    char buf[4096];
+                    for (size_t n; (n = fread(buf, 1, sizeof(buf), f)) > 0;)
+                        text.append(buf, n);
+                    fclose(f);
+                    slot->info.glsl = std::move(text);
+                    fprintf(stderr, "[renderer] %s_%016llx: GLSL from %s\n", type == 0 ? "vs" : "ps", (unsigned long long)hash, path.c_str());
+                }
+            }
             // Compiled to SPIR-V with its first pipeline, on a pipeline worker.
             return slot.get();
         }
@@ -2640,7 +2671,11 @@ shaderPreamble;
             {
                 compiled = true;
                 std::string log;
-                auto spirv = CompileGlsl(vs.info.glsl, GLSLANG_STAGE_VERTEX, log, rect ? "#define SB_RECT\n" : "");
+                // NFSMW_FINITE_POSITION=1: vertices at infinite or NaN positions
+                // moved to the origin (a check, see the translator's epilogue).
+                static const bool finite = [] { const char* v = std::getenv("NFSMW_FINITE_POSITION"); return v && v[0] == '1'; }();
+                const std::string defines = std::string(rect ? "#define SB_RECT\n" : "") + (finite ? "#define SB_FINITE_POSITION\n" : "");
+                auto spirv = CompileGlsl(vs.info.glsl, GLSLANG_STAGE_VERTEX, log, defines.c_str());
                 if (spirv.empty())
                     fprintf(stderr, "[renderer] vs_%016llx%s: GLSL compile failed:\n%s\n", (unsigned long long)vs.hash, rect ? " (SB_RECT)" : "",
                         log.c_str());
@@ -2782,7 +2817,7 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
         VkDescriptorSetLayout s_set0Layout = VK_NULL_HANDLE;
         VkDescriptorPool s_descriptorPool = VK_NULL_HANDLE;
         VkDescriptorSet s_set0 = VK_NULL_HANDLE;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)  // (and Adreno, see below)
         // Intel's Windows driver (UHD 620, 101.2135) reads zeros through a
         // dynamic uniform or storage buffer descriptor wherever the dynamic
         // offset plus the read's place in the range reaches 128 MB (2^27);
@@ -3367,6 +3402,7 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
         RenderTarget* s_passColor[4] = {};
         RenderTarget* s_passDepth = nullptr;
         bool s_passActive = false;
+        bool PassActive() { return s_passActive; }
         VkExtent2D s_passExtent{};  // the attachments' common size
         VkRect2D s_passArea{};      // what this pass loads and stores (tile GPUs move only this)
         // NFSMW_PASS_MERGE bitmask (Draw; default 3 with kFewerPasses, else
@@ -4099,6 +4135,11 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
 
             VkGraphicsPipelineCreateInfo gpci{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
             gpci.pNext = &rci;
+            // NFSMW_PIPELINE_NOOPT=1: the driver's shader optimizations off
+            // (a check of a GPU compiler's code generation).
+            static const bool noOpt = [] { const char* v = std::getenv("NFSMW_PIPELINE_NOOPT"); return v && v[0] == '1'; }();
+            if (noOpt)
+                gpci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
             gpci.stageCount = prepass && !prepassDiscards ? 1 : 2;
             gpci.pStages = stages;
             gpci.pVertexInputState = &vi;
@@ -4113,6 +4154,11 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
             if (s_vk->pipelineExecutableStats)
                 gpci.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
             VkPipeline pipeline = VK_NULL_HANDLE;
+            // NFSMW_PIPELINE_LOG=2: each pipeline as its compile starts (a driver
+            // that crashes in its compiler names no shader).
+            static const bool logStart = [] { const char* v = std::getenv("NFSMW_PIPELINE_LOG"); return v && v[0] == '2'; }();
+            if (logStart)
+                fprintf(stderr, "[pipeline] compiling vs %016llx ps %016llx\n", (unsigned long long)vs.hash, (unsigned long long)ps.hash);
             VkResult r = vkCreateGraphicsPipelines(s_dev, s_pipelineCache, 1, &gpci, nullptr, &pipeline);
             if (r == VK_SUCCESS && s_vk->pipelineExecutableStats)
             {
@@ -4428,6 +4474,29 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
 
         VkPipeline GetPipeline(const PipelineKey& key, VkPipelineLayout layout, bool& pending)
         {
+            // NFSMW_SKIP_SHADERS=<hash>,<hash>...: draws with one of these
+            // vertex or pixel shaders (16 hex digits, NFSMW_PIPELINE_LOG's) are
+            // skipped, as a draw whose pipeline isn't ready is (finding a
+            // shader that a GPU's driver can't run).
+            static const std::set<uint64_t> skip = [] {
+                std::set<uint64_t> out;
+                if (const char* v = std::getenv("NFSMW_SKIP_SHADERS"))
+                    for (const char* p = v; *p;)
+                    {
+                        char* end = nullptr;
+                        const uint64_t h = strtoull(p, &end, 16);
+                        if (end == p)
+                            break;
+                        out.insert(h);
+                        p = *end ? end + 1 : end;
+                    }
+                return out;
+            }();
+            if (!skip.empty() && (skip.count(key.vs) || skip.count(key.ps))) [[unlikely]]
+            {
+                pending = true;
+                return VK_NULL_HANDLE;
+            }
             pending = false;
             static PipelineKey lastKey{};
             static VkPipeline lastPipeline = VK_NULL_HANDLE;
@@ -5136,9 +5205,20 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
             uint32_t block;     // block width/height in texels
             // 0 copy; 1 565, 2 1555, 3 4444 -> RGBA8; 4 24_8 -> R32F;
             // 5 10_11_11, 6 11_11_10 -> RGBA16 (blue also in alpha);
-            // 7 DXT3A -> BC2 (its blocks as the alpha half, white colour)
+            // 7 DXT3A -> BC2 (its blocks as the alpha half, white colour);
+            // decoded to RGBA8 where the device has no BC formats (a phone's
+            // GPU, BcDecoded): 8 DXT1, 9 DXT2/3, 10 DXT4/5, 11 DXT5A (red),
+            // 12 DXN (red, green), 13 DXT3A (white, its alpha)
             uint32_t convert;
         };
+
+        // NFSMW_DECODE_BC=1: the decode even where the device has BC formats
+        // (a check of it on a desktop GPU).
+        bool BcDecoded()
+        {
+            static const bool forced = [] { const char* v = std::getenv("NFSMW_DECODE_BC"); return v && v[0] == '1'; }();
+            return forced || (s_vk && !s_vk->textureCompressionBC);
+        }
 
         // `f`: texformat::SampledAs(the fetch constant's format), so the
         // formats that hold another's data (50-56, 8) load as that one.
@@ -5153,6 +5233,17 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
         // and k_DXT3A_AS_1_1_1_1 (each a load of its own).
         bool GetTextureFormat(uint32_t f, TextureFormatInfo& out)
         {
+            if (BcDecoded())
+                switch (f)
+                {
+                case 18: out = { VK_FORMAT_R8G8B8A8_UNORM, 3, 4, 8 }; return true;
+                case 19: out = { VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 9 }; return true;
+                case 20: out = { VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 10 }; return true;
+                case 49: out = { VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 12 }; return true;
+                case 58: out = { VK_FORMAT_R8G8B8A8_UNORM, 3, 4, 13 }; return true;
+                case 59: out = { VK_FORMAT_R8G8B8A8_UNORM, 3, 4, 11 }; return true;
+                default: break;
+                }
             switch (f)
             {
             case 2: out = { VK_FORMAT_R8_UNORM, 0, 1, 0 }; return true;
@@ -5191,11 +5282,12 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
         }
 
         // A loaded block's bytes (log2): the guest's when copied; a
-        // conversion's 32-bit texel, but for 5 and 6 (64-bit texels) and 7
-        // (a 128-bit BC2 block).
+        // conversion's 32-bit texel, but for 5 and 6 (64-bit texels), 7
+        // (a 128-bit BC2 block) and the BC decodes (a block's 16 RGBA8
+        // texels, 64 bytes, as four rows of the staging: see the untile).
         uint32_t LoadedBpbLog2(const TextureFormatInfo& fi)
         {
-            return fi.convert == 0 ? fi.bpbLog2 : fi.convert == 7 ? 4 : fi.convert >= 5 ? 3 : 2;
+            return fi.convert == 0 ? fi.bpbLog2 : fi.convert >= 8 ? 6 : fi.convert == 7 ? 4 : fi.convert >= 5 ? 3 : 2;
         }
 
         // Stored as resolves write it: one 32-bit word a texel, unconverted
@@ -5662,11 +5754,70 @@ uint element(uint bx, uint by)
 uint expand(uint v, uint bits) { uint m = (1u << bits) - 1u; return (v * 255u + m / 2u) / m; }
 uint expand16(uint v, uint bits) { uint m = (1u << bits) - 1u; return (v * 65535u + m / 2u) / m; }
 
+// BC decoding (the device has no BC formats): texel i (y * 4 + x) of a block.
+// A colour block (two RGB565 endpoints, red in the high bits, then 2-bit
+// indices): DXT1 has a three-colour mode with transparent black when the first
+// endpoint isn't the greater; DXT2-5's colour half is always four colours.
+uvec4 bcColour(uint w0, uint w1, uint i, bool threeColour)
+{
+    uint c0 = w0 & 0xFFFFu, c1 = w0 >> 16;
+    uvec3 e0 = uvec3(expand(c0 >> 11, 5u), expand((c0 >> 5) & 63u, 6u), expand(c0 & 31u, 5u));
+    uvec3 e1 = uvec3(expand(c1 >> 11, 5u), expand((c1 >> 5) & 63u, 6u), expand(c1 & 31u, 5u));
+    uint s = (w1 >> (2u * i)) & 3u;
+    if (s == 0u) return uvec4(e0, 255u);
+    if (s == 1u) return uvec4(e1, 255u);
+    if (!threeColour || c0 > c1)
+        return s == 2u ? uvec4((2u * e0 + e1 + 1u) / 3u, 255u) : uvec4((e0 + 2u * e1 + 1u) / 3u, 255u);
+    return s == 2u ? uvec4((e0 + e1) / 2u, 255u) : uvec4(0u);
+}
+
+// An interpolated channel block (DXT5's alpha, BC4, either half of BC5): two
+// 8-bit endpoints, then 3-bit indices from bit 16 of w0 on.
+uint bcChannel(uint w0, uint w1, uint i)
+{
+    uint a0 = w0 & 0xFFu, a1 = (w0 >> 8) & 0xFFu;
+    uint bit = 3u * i;
+    uint s = bit + 3u <= 16u ? (w0 >> (16u + bit)) & 7u
+           : bit >= 16u ? (w1 >> (bit - 16u)) & 7u
+           : ((w0 >> (16u + bit)) | (w1 << (16u - bit))) & 7u;
+    if (s == 0u) return a0;
+    if (s == 1u) return a1;
+    if (a0 > a1) return ((8u - s) * a0 + (s - 1u) * a1 + 3u) / 7u;
+    if (s == 6u) return 0u;
+    if (s == 7u) return 255u;
+    return ((6u - s) * a0 + (s - 1u) * a1 + 2u) / 5u;
+}
+
+// DXT3's explicit 4-bit alphas (and DXT3A's).
+uint bcAlpha4(uint w0, uint w1, uint i) { return expand(((i < 8u ? w0 : w1) >> (4u * (i & 7u))) & 15u, 4u); }
+
 void main()
 {
     uint gx = gl_GlobalInvocationID.x, gy = gl_GlobalInvocationID.y;
     if (gy >= p.height) return;
     uint row = p.dstWord + gy * p.dstRowWords;
+    // A BC block decoded to its 16 RGBA8 texels: a block row of the staging
+    // is four texel rows of 4 * width words.
+    if (p.convert >= 8u)
+    {
+        if (gx >= p.width) return;
+        uint a = addr(gx, gy);
+        uint w0 = word(a), w1 = word(a + 4u), w2 = 0u, w3 = 0u;
+        if (p.bpbLog2 == 4u) { w2 = word(a + 8u); w3 = word(a + 12u); }
+        uint stride = p.width * 4u;
+        for (uint i = 0u; i < 16u; i++)
+        {
+            uvec4 c;
+            if (p.convert == 8u) c = bcColour(w0, w1, i, true);
+            else if (p.convert == 9u) { c = bcColour(w2, w3, i, false); c.a = bcAlpha4(w0, w1, i); }
+            else if (p.convert == 10u) { c = bcColour(w2, w3, i, false); c.a = bcChannel(w0, w1, i); }
+            else if (p.convert == 11u) c = uvec4(bcChannel(w0, w1, i), 0u, 0u, 255u);
+            else if (p.convert == 12u) c = uvec4(bcChannel(w0, w1, i), bcChannel(w2, w3, i), 0u, 255u);
+            else c = uvec4(255u, 255u, 255u, bcAlpha4(w0, w1, i));
+            STORE((i >> 2) * stride + gx * 4u + (i & 3u), c.r | (c.g << 8) | (c.b << 16) | (c.a << 24));
+        }
+        return;
+    }
     // Conversions wider than a word (never stored directly): 5 10_11_11 and
     // 6 11_11_10 -> RGBA16 (red in the low bits; blue also in alpha, the
     // last component repeated as the texture unit does); 7 a DXT3A block ->
@@ -11635,7 +11786,8 @@ void main()
             VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             bci.size = kRingSize;
             bci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
+            // (Android: Adreno's driver holds to it, 2026-10-27.)
             // Texture uploads copy the untiled texels from the ring into
             // their images (vkCmdCopyBufferToImage), which needs TRANSFER_SRC:
             // without it the validation layer reports
@@ -11738,7 +11890,7 @@ void main()
                 { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, s_set0, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &ring, nullptr },
             };
             vkUpdateDescriptorSets(s_dev, AddSharedParts(w, 3, s_set0), w, 0, nullptr);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
             // (See s_slotSet0.) The same bindings, the constants at each slot.
             VkDescriptorPoolSize slotSizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (s_splitMemory ? 5u : 2u) * kSlots },
                 { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kSlots } };
@@ -13175,6 +13327,30 @@ void main()
         }
         if (useIndices)
             vertexCount = directIndices ? count : uint32_t(indices.size());
+        // NFSMW_LOG_VS=<hash>,...: the first 8 draws with each of these vertex
+        // shaders, their primitives and indices (what a driver chokes on).
+        {
+            static const std::set<uint64_t> logVs = [] {
+                std::set<uint64_t> out;
+                if (const char* v = std::getenv("NFSMW_LOG_VS"))
+                    for (const char* p = v; *p;)
+                    {
+                        char* end = nullptr;
+                        const uint64_t h = strtoull(p, &end, 16);
+                        if (end == p)
+                            break;
+                        out.insert(h);
+                        p = *end ? end + 1 : end;
+                    }
+                return out;
+            }();
+            static std::map<uint64_t, int> logged;
+            if (!logVs.empty() && s_vs && logVs.count(s_vs->hash) && logged[s_vs->hash]++ < 8)
+                fprintf(stderr, "[drawlog] vs_%016llx ps_%016llx prim %u topology %d count %u vertices %u indexed %d is32 %d restart %d reset %08X direct %d useIndices %d rect %d indexInfo %08X base %08X\n",
+                    (unsigned long long)s_vs->hash, (unsigned long long)(s_ps ? s_ps->hash : 0), uint32_t(initiator.prim_type), int(topology), count,
+                    vertexCount, int(src.indexed), int(src.is32), int(restart), unsigned(resetIndex), int(directIndices), int(useIndices),
+                    int(rectList), pc.indexInfo, src.base);
+        }
         // 16-bit indices when 0xFFFF means what the pipeline says: restart
         // with the guest's reset index 0xFFFF, or no restart (an index
         // 0xFFFF is then a vertex like any other). Metal can't turn primitive
@@ -14924,7 +15100,7 @@ void main()
                 : barPlan.rectCount || zpdCount ? kPrepassOther : kPrepassOk;
             s_passInfos.back().prepass[why]++;
         }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
         // The constants' slot's set and their offset in it (see s_slotSet0).
         // `bound` keeps the whole ring offset, which names both, so a skip
         // never leaves another slot's set bound.

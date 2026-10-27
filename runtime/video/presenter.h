@@ -11,7 +11,11 @@
 #include <mutex>
 #include <vector>
 
+#ifdef __ANDROID__
+#include <volk.h>  // Vulkan through function pointers (runtime/CMakeLists.txt, VK_NO_PROTOTYPES)
+#else
 #include <vulkan/vulkan.h>
+#endif
 
 namespace video
 {
@@ -205,6 +209,10 @@ namespace video
         // makes logs its shaders' compiler statistics (registers, spills,
         // instructions; gpu/renderer.cpp).
         bool pipelineExecutableStats = false;
+        // Block-compressed (BC1-BC5) images: every desktop GPU and Apple's;
+        // not a phone's (Adreno, Mali), whose DXT textures the renderer
+        // decodes as it loads them (gpu/renderer.cpp, GetTextureFormat).
+        bool textureCompressionBC = true;
 #ifdef _WIN32
         // Windows on an Intel integrated GPU: the defaults measured on one
         // (presenter.cpp, IntegratedGpuDefaults). The renderer's part:

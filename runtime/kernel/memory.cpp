@@ -46,6 +46,15 @@ bool Memory::MapPhysicalMirrors()
     if (fd < 0)
         perror("[memory] memfd_create (trying shm_open)");
 #endif
+#ifdef __ANDROID__
+    // Android has no shm_open (no /dev/shm): memfd_create is all there is.
+    if (fd < 0)
+    {
+        failedError = errno;
+        failedCall = "memfd_create";
+        return false;
+    }
+#else
     if (fd < 0)
     {
         // A kernel without memfd_create (ENOSYS), or a sandbox that refuses it.
@@ -61,6 +70,7 @@ bool Memory::MapPhysicalMirrors()
         }
         shm_unlink(name);  // the mappings keep it alive
     }
+#endif
     bool ok = ftruncate(fd, PHYSICAL_SIZE) == 0;
     if (!ok)
     {

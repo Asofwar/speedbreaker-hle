@@ -868,6 +868,65 @@ namespace report
         auto& mc = static_cast<ucontext_t*>(context)->uc_mcontext;
         b.Str("[crash] host registers: pc=0x").Hex(uint64_t(mc.pc)).Str(" lr=0x").Hex(uint64_t(mc.regs[30]))
             .Str(" sp=0x").Hex(uint64_t(mc.sp)).Char('\n');
+#ifdef __ANDROID__
+        // A library another linker namespace loaded (a Vulkan driver of the
+        // app's own, NFSMW_VK_DRIVER): backtrace and dladdr don't name it, its
+        // mapping in /proc/self/maps does.
+        auto mapping = [&](const char* what, uint64_t address) {
+            const int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+            if (fd < 0)
+                return;
+            static char buffer[1 << 16];
+            char line[512];
+            size_t length = 0;
+            for (ssize_t got; (got = read(fd, buffer, sizeof(buffer))) > 0;)
+                for (ssize_t i = 0; i < got; i++)
+                {
+                    if (buffer[i] != '\n')
+                    {
+                        if (length < sizeof(line) - 1)
+                            line[length++] = buffer[i];
+                        continue;
+                    }
+                    line[length] = '\0';
+                    length = 0;
+                    char* end = nullptr;
+                    const uint64_t low = strtoull(line, &end, 16);
+                    const uint64_t high = end && *end == '-' ? strtoull(end + 1, nullptr, 16) : 0;
+                    if (address >= low && address < high)
+                    {
+                        b.Str("[crash] ").Str(what).Str(" (+0x").Hex(address - low).Str(") is in ").Str(line).Char('\n');
+                        close(fd);
+                        return;
+                    }
+                }
+            close(fd);
+        };
+        mapping("pc", uint64_t(mc.pc));
+        mapping("lr", uint64_t(mc.regs[30]));
+        // And where such a driver is (its unnamed frames below are in it).
+        if (const int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC); fd >= 0)
+        {
+            static char buffer[1 << 16];
+            char line[512];
+            size_t length = 0;
+            for (ssize_t got; (got = read(fd, buffer, sizeof(buffer))) > 0;)
+                for (ssize_t i = 0; i < got; i++)
+                {
+                    if (buffer[i] != '\n')
+                    {
+                        if (length < sizeof(line) - 1)
+                            line[length++] = buffer[i];
+                        continue;
+                    }
+                    line[length] = '\0';
+                    length = 0;
+                    if (strstr(line, "libvulkan_freedreno") && strstr(line, "r-xp"))
+                        b.Str("[crash] driver code: ").Str(line).Char('\n');
+                }
+            close(fd);
+        }
+#endif
 #endif
         // Innermost first: the faulting code, then its callers (the
         // handler's own frames left out).

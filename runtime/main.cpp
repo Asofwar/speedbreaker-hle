@@ -45,6 +45,9 @@
 #include <game/language.h>
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+#include <SDL3/SDL_main.h>  // SDL's Java side (SDLActivity) calls main() as SDL_main
+#endif
 #if defined(__APPLE__) && TARGET_OS_IOS
 #include <SDL3/SDL_main.h>  // SDL starts UIKit and calls main() from it
 #include <platform/ios_files.h>
@@ -380,6 +383,25 @@ static void SetReleaseDefaults(int argc, char** argv)
             "the European (PAL, Spanish) disc's language");
 }
 
+#ifdef __ANDROID__
+// Android: the app's own folder in shared storage (Android/data/<package>/files:
+// no permission needed, and adb push reaches it) is HOME, the current folder,
+// and the base of what Linux keeps in ~/.local/share and ~/.cache (user/paths.h).
+// (env.txt there sets the environment: the activity reads it before this library
+// loads, android/src/main/java/.../SpeedBreakerActivity.java.)
+static void UseAndroidFolders()
+{
+    const char* external = SDL_GetAndroidExternalStoragePath();
+    const std::string base = external ? external : SDL_GetAndroidInternalStoragePath();
+    if (base.empty())
+        return;
+    setenv("HOME", base.c_str(), 1);
+    setenv("XDG_DATA_HOME", (base + "/data").c_str(), 1);
+    setenv("XDG_CACHE_HOME", (base + "/cache").c_str(), 1);
+    chdir(base.c_str());
+}
+#endif
+
 int main(int argc, char** argv)
 {
     // Windows: no drive-error dialogs, UTF-8 in the console
@@ -398,6 +420,9 @@ int main(int argc, char** argv)
     // Documents folder instead: the one Finder and the Files app show.
     if (const char* home = std::getenv("HOME"))
         chdir((std::string(home) + "/Documents").c_str());
+#endif
+#ifdef __ANDROID__
+    UseAndroidFolders();
 #endif
     // Which folder the game runs from, before anything changes directory:
     // the installer never puts the game inside it (install/placement.h), and

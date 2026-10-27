@@ -30,6 +30,10 @@
 #ifdef _WIN32
 #include <platform/startup.h>
 #endif
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <string>
+#endif
 
 namespace report
 {
@@ -230,6 +234,23 @@ namespace report
                 }
                 FileWrite(stamped, size);
                 RingAppend(stamped, size);
+#ifdef __ANDROID__
+                // Android drops stderr: each line also goes to logcat
+                // (adb logcat -s SpeedBreaker).
+                {
+                    static std::string line;
+                    for (ssize_t i = 0; i < n; i++)
+                    {
+                        if (buffer[i] != '\n')
+                        {
+                            line += buffer[i];
+                            continue;
+                        }
+                        __android_log_write(ANDROID_LOG_INFO, "SpeedBreaker", line.c_str());
+                        line.clear();
+                    }
+                }
+#endif
                 s_chunks.fetch_add(1, std::memory_order_release);
                 s_busy.store(false, std::memory_order_release);
             }

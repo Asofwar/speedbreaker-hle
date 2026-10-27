@@ -64,7 +64,15 @@
 #include <fstream>
 #include <type_traits>
 #include <utility>
+#ifdef __ANDROID__
+#include <volk.h>  // Vulkan through function pointers (runtime/CMakeLists.txt, VK_NO_PROTOTYPES)
+#include <adrenotools/driver.h>
+#include <android/native_window.h>
+#include <dlfcn.h>
+#include <sys/stat.h>
+#else
 #include <vulkan/vulkan.h>
+#endif
 
 #include <signal.h>
 
@@ -308,7 +316,15 @@ namespace video
         // watched after a resume, a size event or a new swapchain,
         // SUBOPTIMAL/OUT_OF_DATE followed, SDL's view fitted back to its
         // window on iOS, and no portrait swapchain on a landscape iPhone.
+#ifdef __ANDROID__
+        // Android: the swapchain is made unrotated (CreateSwapchain), and the
+        // driver then reports every present SUBOPTIMAL (its preTransform isn't
+        // the panel's): not a reason to build it again. A new size still is
+        // (a fold, a split screen: size events and the surface's periodic read).
+        SwapchainPolicy s_swapPolicy{ [] { SwapchainRules r; r.followSuboptimal = false; return r; }() };
+#else
         SwapchainPolicy s_swapPolicy;
+#endif
         // What the next CreateSwapchain is for (its log line), and how many
         // rebuilds at an unchanged size have been logged.
         const char* s_swapReason = nullptr;
@@ -391,6 +407,64 @@ namespace video
                 fprintf(stderr, "[video] %s failed: %d\n", what, int(r));
             return r == VK_SUCCESS;
         }
+
+#ifdef __ANDROID__
+        // Vulkan's functions (volk): the system's loader and driver, or with
+        // NFSMW_VK_DRIVER=turnip Mesa's Turnip from the app's native libraries
+        // (libvulkan_freedreno.so, scripts/android/build_turnip.sh), which
+        // libadrenotools loads into a private copy of the system's loader: where
+        // the phone's own driver gets the game wrong (Adreno 840, Qualcomm
+        // V@0842.52: the car vertex shaders hang the GPU). The activity names
+        // the folders (SB_NATIVE_LIB_DIR, SB_CODE_CACHE_DIR).
+        bool LoadVulkan()
+        {
+            const char* driver = std::getenv("NFSMW_VK_DRIVER");
+            if (driver && std::strcmp(driver, "turnip") == 0)
+            {
+                const char* libDir = std::getenv("SB_NATIVE_LIB_DIR");
+                const char* cacheDir = std::getenv("SB_CODE_CACHE_DIR");
+                if (libDir && cacheDir)
+                {
+                    const std::string libs = std::string(libDir) + "/";
+                    const std::string tmp = std::string(cacheDir) + "/vulkan/";
+                    mkdir(tmp.c_str(), 0700);
+                    void* handle = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, tmp.c_str(), libs.c_str(), libs.c_str(),
+                        "libvulkan_freedreno.so", nullptr, nullptr);
+                    auto gipa = handle ? reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(handle, "vkGetInstanceProcAddr")) : nullptr;
+                    if (gipa)
+                    {
+                        volkInitializeCustom(gipa);
+                        fprintf(stderr, "[video] Vulkan driver: Turnip (NFSMW_VK_DRIVER=turnip, %slibvulkan_freedreno.so)\n", libs.c_str());
+                        return true;
+                    }
+                    const char* why = dlerror();
+                    fprintf(stderr, "[video] NFSMW_VK_DRIVER=turnip: not loaded (%s): the system's driver\n", why ? why : "libadrenotools failed");
+                }
+                else
+                    fprintf(stderr, "[video] NFSMW_VK_DRIVER=turnip: the app's folders aren't known: the system's driver\n");
+            }
+            const VkResult r = volkInitialize();
+            if (r != VK_SUCCESS)
+                fprintf(stderr, "[video] no Vulkan loader (volkInitialize: %d)\n", int(r));
+            return r == VK_SUCCESS;
+        }
+
+        // The window's surface, on SDL's ANativeWindow: SDL's own would call the
+        // system loader's functions, whichever driver the instance is from.
+        bool CreateWindowSurface()
+        {
+            auto* window = static_cast<ANativeWindow*>(SDL_GetPointerProperty(SDL_GetWindowProperties(s_window),
+                SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
+            if (!window)
+            {
+                fprintf(stderr, "[video] the window has no ANativeWindow yet\n");
+                return false;
+            }
+            VkAndroidSurfaceCreateInfoKHR ci{ VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
+            ci.window = window;
+            return Check(vkCreateAndroidSurfaceKHR(s_instance, &ci, nullptr, &s_surface), "vkCreateAndroidSurfaceKHR");
+        }
+#endif
 
         // ---------------------------------------------------------------
         // A lost device (DeviceLost, presenter.h). 0 until one is seen, 1
@@ -1171,7 +1245,21 @@ namespace video
             s_swapReadable = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
             info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.preTransform = caps.currentTransform;
-            info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+#ifdef __ANDROID__
+            // A phone's panel may be mounted turned (a foldable's inner screen:
+            // ROTATE_90 with the display at rotation 0). The picture is drawn
+            // the window's way up and the system's compositor turns it (one
+            // more pass there), rather than every pass of ours turned.
+            if (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+                info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+            static bool transformLogged = false;
+            if (!std::exchange(transformLogged, true))
+                fprintf(stderr, "[video] the surface's transform %#x, the swapchain's %#x (the compositor turns the difference)\n",
+                    unsigned(caps.currentTransform), unsigned(info.preTransform));
+#endif
+            // Opaque where offered; Android's surfaces offer INHERIT alone.
+            info.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) || !caps.supportedCompositeAlpha
+                ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
             // V-Sync off: mailbox (no tearing, newest frame) where there is
             // one, else immediate.
             info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -3163,6 +3251,10 @@ void main()
         platform::ios::WatchKeyboards(s_window);
 #endif
 
+#ifdef __ANDROID__
+        if (!LoadVulkan())
+            return false;
+#endif
         Uint32 extCount = 0;
         const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&extCount);
         std::vector<const char*> exts(sdlExts, sdlExts + extCount);
@@ -3180,6 +3272,25 @@ void main()
         if (portability)
             exts.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 
+        // NFSMW_VK_VALIDATION=1: Khronos' validation layer, where it is
+        // installed (on Android: in the APK's native libraries), its errors
+        // and warnings in the log (each message's first 5 times).
+        static const bool validation = [] { const char* v = std::getenv("NFSMW_VK_VALIDATION"); return v && v[0] >= '1' && v[0] <= '3'; }();
+        std::vector<const char*> layers;
+        if (validation)
+        {
+            uint32_t layerCount = 0;
+            vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+            std::vector<VkLayerProperties> layerProps(layerCount);
+            vkEnumerateInstanceLayerProperties(&layerCount, layerProps.data());
+            for (const VkLayerProperties& l : layerProps)
+                if (strcmp(l.layerName, "VK_LAYER_KHRONOS_validation") == 0)
+                    layers.push_back("VK_LAYER_KHRONOS_validation");
+            fprintf(stderr, "[video] NFSMW_VK_VALIDATION: %s\n", layers.empty() ? "no validation layer installed" : "the validation layer on");
+            if (!layers.empty())
+                exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        }
+
         VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
         app.pApplicationName = "SpeedBreaker";
         app.apiVersion = VK_API_VERSION_1_2;
@@ -3188,9 +3299,51 @@ void main()
         ici.pApplicationInfo = &app;
         ici.enabledExtensionCount = uint32_t(exts.size());
         ici.ppEnabledExtensionNames = exts.data();
+        ici.enabledLayerCount = uint32_t(layers.size());
+        ici.ppEnabledLayerNames = layers.data();
+        // NFSMW_VK_VALIDATION=2: GPU-assisted validation too (the layer
+        // instruments the shaders: out-of-bounds buffer and descriptor accesses).
+        // =3: GPU-assisted validation without instrumenting the shaders (the
+        // device features it turns on, alone).
+        static const VkBool32 kTrue = VK_TRUE, kFalse = VK_FALSE;
+        const VkLayerSettingEXT gpuav[2] = {
+            { "VK_LAYER_KHRONOS_validation", "gpuav_enable", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &kTrue },
+            { "VK_LAYER_KHRONOS_validation", "gpuav_shader_instrumentation", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &kFalse },
+        };
+        const char mode = layers.empty() ? '0' : std::getenv("NFSMW_VK_VALIDATION")[0];
+        VkLayerSettingsCreateInfoEXT layerSettings{ VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT, nullptr, mode == '3' ? 2u : 1u, gpuav };
+        if (mode == '2' || mode == '3')
+            ici.pNext = &layerSettings;
         if (!Check(vkCreateInstance(&ici, nullptr, &s_instance), "vkCreateInstance"))
             return false;
+#ifdef __ANDROID__
+        volkLoadInstance(s_instance);
+#endif
+        if (!layers.empty())
+        {
+            auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(s_instance, "vkCreateDebugUtilsMessengerEXT"));
+            VkDebugUtilsMessengerCreateInfoEXT mci{ VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+            mci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            mci.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
+            mci.pfnUserCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT,
+                                     const VkDebugUtilsMessengerCallbackDataEXT* data, void*) -> VkBool32 {
+                static std::mutex mutex;
+                static std::map<int32_t, int> seen;
+                std::lock_guard lock(mutex);
+                if (++seen[data->messageIdNumber] <= 5)
+                    fprintf(stderr, "[vk-%s] %s\n", severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "error" : "warning",
+                        data->pMessage ? data->pMessage : "");
+                return VK_FALSE;
+            };
+            VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+            if (create)
+                create(s_instance, &mci, nullptr, &messenger);
+        }
+#ifdef __ANDROID__
+        if (!CreateWindowSurface())
+#else
         if (!SDL_Vulkan_CreateSurface(s_window, s_instance, nullptr, &s_surface))
+#endif
         {
             fprintf(stderr, "[video] SDL_Vulkan_CreateSurface: %s\n", SDL_GetError());
             return false;
@@ -3420,6 +3573,12 @@ void main()
         features.vertexPipelineStoresAndAtomics = supported.vertexPipelineStoresAndAtomics;
         features.fragmentStoresAndAtomics = supported.fragmentStoresAndAtomics;
         features.independentBlend = supported.independentBlend;
+        // NFSMW_ROBUST=1: bounds-checked buffer accesses (a check: does an
+        // out-of-range read or write lose the device on this GPU?). Slower.
+        static const bool robust = [] { const char* v = std::getenv("NFSMW_ROBUST"); return v && v[0] == '1'; }();
+        features.robustBufferAccess = robust && supported.robustBufferAccess;
+        if (robust)
+            fprintf(stderr, "[video] NFSMW_ROBUST: robust buffer access %s\n", features.robustBufferAccess ? "on" : "not offered");
         features.dualSrcBlend = supported.dualSrcBlend;
         features.depthClamp = supported.depthClamp;
         features.samplerAnisotropy = supported.samplerAnisotropy;
@@ -3427,6 +3586,8 @@ void main()
         features.pipelineStatisticsQuery = passStats && supported.pipelineStatisticsQuery;
         features.occlusionQueryPrecise = passStats && supported.occlusionQueryPrecise;  // (NFSMW_PASS_STATS=2's samples)
         features.textureCompressionBC = supported.textureCompressionBC;
+        if (!supported.textureCompressionBC)
+            fprintf(stderr, "[video] no BC (DXT) texture formats on this device: the renderer decodes those textures as it loads them\n");
         features.shaderInt16 = supported.shaderInt16;
         VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRendering{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR };
         dynamicRendering.dynamicRendering = VK_TRUE;
@@ -3523,7 +3684,12 @@ void main()
         dci.pQueueCreateInfos = &qci;
         dci.enabledExtensionCount = uint32_t(devExts.size());
         dci.ppEnabledExtensionNames = devExts.data();
-        if (!Check(vkCreateDevice(s_physical, &dci, nullptr, &s_device), "vkCreateDevice"))
+        const bool deviceMade = Check(vkCreateDevice(s_physical, &dci, nullptr, &s_device), "vkCreateDevice");
+#ifdef __ANDROID__
+        if (deviceMade)
+            volkLoadDevice(s_device);
+#endif
+        if (!deviceMade)
             return false;
         vkGetDeviceQueue(s_device, s_queueFamily, 0, &s_queue);
         if (s_presentTiming)
@@ -3655,6 +3821,7 @@ void main()
 #ifdef _WIN32
         s_context.integratedGpuDefaults = integratedGpuDefaults;
 #endif
+        s_context.textureCompressionBC = features.textureCompressionBC == VK_TRUE;
         s_contextReady = true;
         s_settingsGeneration = settings::Generation();
         fprintf(stderr, "[video] %s, swapchain %ux%u%s\n", props.deviceName, s_swapExtent.width, s_swapExtent.height, GeometryNote().c_str());
@@ -4246,7 +4413,11 @@ void main()
             s_surface = VK_NULL_HANDLE;
             s_surfaceTries++;
             const bool log = s_surfaceTries <= 3 || s_surfaceTries % 100 == 0;
+#ifdef __ANDROID__
+            if (!CreateWindowSurface())
+#else
             if (!SDL_Vulkan_CreateSurface(s_window, s_instance, nullptr, &s_surface))
+#endif
             {
                 s_surface = VK_NULL_HANDLE;
                 if (log)

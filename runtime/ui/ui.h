@@ -28,7 +28,11 @@
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_video.h>
+#ifdef __ANDROID__
+#include <volk.h>  // Vulkan through function pointers (runtime/CMakeLists.txt, VK_NO_PROTOTYPES)
+#else
 #include <vulkan/vulkan.h>
+#endif
 
 namespace ui
 {
