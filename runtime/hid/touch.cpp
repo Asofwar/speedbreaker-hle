@@ -8,12 +8,15 @@
 #endif
 #include <kernel/memory.h>
 #include <ui/ui.h>
+#include <user/paths.h>
 #include <user/settings.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -65,6 +68,60 @@ namespace hid::touch
         bool s_gravityValid = false;
 
         const bool s_log = [] { const char* v = std::getenv("NFSMW_INPUT_LOG"); return v && v[0] == '1'; }();
+
+        // Haptics: the device's own vibrator, SDL's "VIBRATOR_SERVICE" haptic on Android
+        // (elsewhere the haptics SDL lists are controllers', which rumble with the game anyway).
+        SDL_Haptic* s_haptic = nullptr;
+        bool s_hapticTried = false;
+        bool s_shownForHaptics = false;  // (s_shown, declared below)
+
+        settings::TouchHapticsMode HapticsMode()
+        {
+            if (!settings::GetBool(Id::Vibration))
+                return settings::TouchHapticsMode::Off;
+            return settings::TouchHapticsMode(settings::GetInt(Id::TouchHaptics));
+        }
+
+        void Buzz(float strength, uint32_t milliseconds)
+        {
+#ifdef __ANDROID__
+            if (!s_shownForHaptics)
+                return;
+            if (!s_haptic && !s_hapticTried)
+            {
+                s_hapticTried = true;
+                if (!SDL_WasInit(SDL_INIT_HAPTIC) && !SDL_InitSubSystem(SDL_INIT_HAPTIC))
+                {
+                    fprintf(stderr, "[touch] haptics: %s\n", SDL_GetError());
+                    return;
+                }
+                int count = 0;
+                SDL_HapticID* ids = SDL_GetHaptics(&count);
+                for (int i = 0; i < count && !s_haptic; i++)
+                    if (const char* name = SDL_GetHapticNameForID(ids[i]); name && std::string(name) == "VIBRATOR_SERVICE")
+                        s_haptic = SDL_OpenHaptic(ids[i]);
+                SDL_free(ids);
+                if (s_haptic && !SDL_InitHapticRumble(s_haptic))
+                {
+                    SDL_CloseHaptic(s_haptic);
+                    s_haptic = nullptr;
+                }
+                fprintf(stderr, "[touch] haptics: %s\n", s_haptic ? "the device's vibrator" : "none");
+            }
+            if (s_haptic)
+                SDL_PlayHapticRumble(s_haptic, std::clamp(strength, 0.0f, 1.0f), milliseconds);
+#else
+            (void)strength;
+            (void)milliseconds;
+#endif
+        }
+
+        // A control pressed (or a gesture taken): a short tick.
+        void Tick()
+        {
+            if (HapticsMode() != settings::TouchHapticsMode::Off)
+                Buzz(0.35f, 14);
+        }
 
         // NFSMW_VIRTUAL_TOUCH's steps.
         struct Step
@@ -154,14 +211,142 @@ namespace hid::touch
             }
         }
 
-        Layout CurrentLayout(float w, float h)
+        // Edit Layout: the player's places (touch_layout.txt), the layout being edited, and
+        // the fingers dragging controls (by Key, and where on the control they took it) or
+        // on the bar.
+        Placements s_placed;
+        bool s_placedLoaded = false;
+        bool s_editing = false;
+        Mode s_editMode = Mode::Driving;
+        struct Drag
+        {
+            std::string key;
+            float offsetX = 0, offsetY = 0;
+        };
+        std::unordered_map<SDL_FingerID, Drag> s_drags;
+        std::unordered_map<SDL_FingerID, Kind> s_barFingers;
+
+        std::filesystem::path PlacementsFile()
+        {
+            return GetUserPath() / "touch_layout.txt";
+        }
+
+        const Placements& Placed()
+        {
+            if (!s_placedLoaded)
+            {
+                s_placedLoaded = true;
+                std::ifstream in(PlacementsFile(), std::ios::binary);
+                if (in)
+                {
+                    std::stringstream text;
+                    text << in.rdbuf();
+                    s_placed = ParsePlacements(text.str());
+                    fprintf(stderr, "[touch] layout: %zu controls in places of the player's own\n", s_placed.size());
+                }
+            }
+            return s_placed;
+        }
+
+        void SavePlacements()
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(PlacementsFile().parent_path(), ec);
+            std::ofstream out(PlacementsFile(), std::ios::binary | std::ios::trunc);
+            out << FormatPlacements(s_placed);
+            fprintf(stderr, "[touch] layout saved: %zu controls moved (%s)\n", s_placed.size(), out ? "ok" : "could not write");
+        }
+
+        Layout CurrentLayout(float w, float h, Mode mode)
         {
             float x0, y0, aw, ah;
             SafeArea(w, h, x0, y0, aw, ah);
-            Layout l = Build(s_mode, SteeringSetting(), settings::GetBool(Id::TouchAutoGas), aw, ah,
-                float(settings::GetInt(Id::TouchSize)) / 100.0f);
+            Layout l = Build(mode, SteeringSetting(), settings::GetBool(Id::TouchAutoGas), aw, ah,
+                float(settings::GetInt(Id::TouchSize)) / 100.0f, &Placed());
             Offset(l, x0, y0);
             return l;
+        }
+
+        Layout CurrentLayout(float w, float h)
+        {
+            return CurrentLayout(w, h, s_mode);
+        }
+
+        std::vector<Widget> CurrentEditBar(float w, float h)
+        {
+            float x0, y0, aw, ah;
+            SafeArea(w, h, x0, y0, aw, ah);
+            Layout bar;
+            bar.widgets = EditBar(aw, ah, 1.0f);
+            Offset(bar, x0, y0);
+            return bar.widgets;
+        }
+
+        // A finger event while Edit Layout is up: grab, drag, let go; the bar's buttons act
+        // as the finger lifts on them.
+        void EditEvent(const SDL_TouchFingerEvent& e, float w, float h)
+        {
+            const float x = e.x * w, y = e.y * h;
+            switch (e.type)
+            {
+            case SDL_EVENT_FINGER_DOWN:
+            {
+                const std::vector<Widget> bar = CurrentEditBar(w, h);
+                if (const int b = Grab(bar, x, y); b >= 0)
+                {
+                    s_barFingers[e.fingerID] = bar[size_t(b)].kind;
+                    break;
+                }
+                const Layout l = CurrentLayout(w, h, s_editMode);
+                if (const int g = Grab(l.widgets, x, y); g >= 0)
+                {
+                    const Widget& wd = l.widgets[size_t(g)];
+                    s_drags[e.fingerID] = Drag{ Key(s_editMode, wd), x - wd.x, y - wd.y };
+                }
+                break;
+            }
+            case SDL_EVENT_FINGER_MOTION:
+                if (auto it = s_drags.find(e.fingerID); it != s_drags.end())
+                {
+                    float x0, y0, aw, ah;
+                    SafeArea(w, h, x0, y0, aw, ah);
+                    s_placed[it->second.key] = Point{ std::clamp((x - it->second.offsetX - x0) / aw, 0.0f, 1.0f),
+                        std::clamp((y - it->second.offsetY - y0) / ah, 0.0f, 1.0f) };
+                }
+                break;
+            default:
+            {
+                s_drags.erase(e.fingerID);
+                auto it = s_barFingers.find(e.fingerID);
+                if (it == s_barFingers.end())
+                    break;
+                const Kind kind = it->second;
+                s_barFingers.erase(it);
+                if (e.type == SDL_EVENT_FINGER_CANCELED)
+                    break;
+                const std::vector<Widget> bar = CurrentEditBar(w, h);
+                const int b = Grab(bar, x, y);
+                if (b < 0 || bar[size_t(b)].kind != kind)
+                    break;
+                Tick();
+                if (kind == Kind::EditSwitch)
+                    s_editMode = s_editMode == Mode::Driving ? Mode::Menu : Mode::Driving;
+                else if (kind == Kind::EditReset)
+                {
+                    const std::string prefix = s_editMode == Mode::Driving ? "driving " : "menus ";
+                    std::erase_if(s_placed, [&](const auto& p) { return p.first.rfind(prefix, 0) == 0; });
+                }
+                else if (kind == Kind::EditDone)
+                {
+                    SavePlacements();
+                    s_editing = false;
+                    s_drags.clear();
+                    s_barFingers.clear();
+                    fprintf(stderr, "[touch] edit layout: done\n");
+                }
+                break;
+            }
+            }
         }
 
         const char* Name(const Finger& f)
@@ -201,6 +386,7 @@ namespace hid::touch
             if (!bit)
                 return;
             s_pulses.emplace_back(bit, now + kPulseNs);
+            Tick();
             if (s_log)
                 fprintf(stderr, "[touch] %s: button %04X\n", why, unsigned(bit));
         }
@@ -234,6 +420,7 @@ namespace hid::touch
                 f.button = l.widgets[size_t(hit)].button;
                 if (s_log)
                     fprintf(stderr, "[touch] finger %llu on %s\n", (unsigned long long)e.fingerID, Name(f));
+                Tick();
             }
             else if (s_mode == Mode::Menu && settings::GetBool(Id::TouchGestures))
             {
@@ -306,20 +493,12 @@ namespace hid::touch
                 e.tfinger.timestamp = SDL_GetTicksNS();
                 e.tfinger.touchID = kVirtualTouchID;
                 e.tfinger.fingerID = s.id;
+                // A lift is where the finger last was (its down or move step).
+                static std::unordered_map<SDL_FingerID, std::pair<float, float>> at;
                 if (s.type != SDL_EVENT_FINGER_UP)
-                {
-                    e.tfinger.x = s.x;
-                    e.tfinger.y = s.y;
-                }
-                else
-                    for (const auto& [id, f] : s_fingers)
-                        if (id == s.id)
-                        {
-                            float w = 1, h = 1;
-                            WindowSize(w, h);
-                            e.tfinger.x = f.x / w;
-                            e.tfinger.y = f.y / h;
-                        }
+                    at[s.id] = { s.x, s.y };
+                e.tfinger.x = at[s.id].first;
+                e.tfinger.y = at[s.id].second;
                 e.tfinger.pressure = s.type == SDL_EVENT_FINGER_UP ? 0.0f : 1.0f;
                 e.tfinger.windowID = window ? SDL_GetWindowID(window) : 0;
                 SDL_PushEvent(&e);
@@ -369,6 +548,8 @@ namespace hid::touch
 
         bool Shown()
         {
+            if (s_editing)  // (whatever Touch Controls says: the player asked for it)
+                return ScreenPresent() && ui::Ready() && !ui::CapturingInput() && !ui::HasModal();
             const auto mode = settings::TouchControlsMode(settings::GetInt(Id::TouchControls));
             if (mode == settings::TouchControlsMode::Off || !ScreenPresent())
                 return false;
@@ -499,6 +680,11 @@ namespace hid::touch
             s_fingers.erase(e.tfinger.fingerID);
             return;
         }
+        if (s_editing)
+        {
+            EditEvent(e.tfinger, w, h);
+            return;
+        }
         switch (e.type)
         {
         case SDL_EVENT_FINGER_DOWN:
@@ -512,6 +698,24 @@ namespace hid::touch
                 f.y = e.tfinger.y * h;
                 if (!f.onControl && std::hypot(f.x - f.startX, f.y - f.startY) > kSlopUnits * Unit(w, h, 1.0f))
                     s_gesture.moved = true;
+                // Sliding onto the other control of its group (steering, pedals, D-pad) takes it.
+                if (const int group = f.onControl ? SlideGroup(f.kind, f.button) : 0)
+                {
+                    const Layout l = CurrentLayout(w, h);
+                    const int hit = HitTest(l, f.x, f.y);
+                    if (hit >= 0)
+                    {
+                        const Widget& wd = l.widgets[size_t(hit)];
+                        if ((wd.kind != f.kind || wd.button != f.button) && SlideGroup(wd.kind, wd.button) == group)
+                        {
+                            f.kind = wd.kind;
+                            f.button = wd.button;
+                            if (s_log)
+                                fprintf(stderr, "[touch] finger %llu slid to %s\n", (unsigned long long)e.tfinger.fingerID, Name(f));
+                            Tick();
+                        }
+                    }
+                }
             }
             break;
         default:
@@ -523,12 +727,19 @@ namespace hid::touch
     bool Contribute(bool controllerOpen, uint16_t& buttons, float& lx, float& ly, float& lt, float& rt)
     {
         StepScript();
+        // NFSMW_TOUCH_EDIT=<s> (tests): Edit Layout at that many seconds after launch.
+        static double editAt = [] { const char* v = std::getenv("NFSMW_TOUCH_EDIT"); return v ? std::atof(v) : -1.0; }();
+        if (editAt >= 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - s_launch).count() >= editAt)
+        {
+            editAt = -1;
+            EditLayout();
+        }
         s_controllerOpen = controllerOpen;
         const auto now = std::chrono::steady_clock::now();
         const float dt = std::clamp(std::chrono::duration<float>(now - s_lastContribute).count(), 0.0f, 0.05f);
         s_lastContribute = now;
         const auto setting = settings::TouchControlsMode(settings::GetInt(Id::TouchControls));
-        const bool possible = setting != settings::TouchControlsMode::Off && ScreenPresent();
+        const bool possible = (s_editing || setting != settings::TouchControlsMode::Off) && ScreenPresent();
         if (possible)
             UpdateMode();
         const bool shown = possible && Shown();
@@ -536,13 +747,14 @@ namespace hid::touch
         {
             fprintf(stderr, "[touch] controls %s\n", shown ? "shown" : "hidden");
             s_shown = shown;
+            s_shownForHaptics = shown;
             Release();
         }
         const Steering steering = SteeringSetting();
         if (!shown || steering != Steering::Tilt)
             CloseSensor();
-        if (!shown)
-            return false;
+        if (!shown || s_editing)
+            return false;  // (Edit Layout: nothing reaches the game)
 
         int steerDirection = 0;
         bool gas = false, brake = false, leftTrigger = false, rightTrigger = false, stick = false;
@@ -581,7 +793,7 @@ namespace hid::touch
         {
             if (steering == Steering::Buttons)
             {
-                s_steer = EaseSteering(s_steer, steerDirection, dt);
+                s_steer = EaseSteering(s_steer, steerDirection, dt, SteerInSeconds(settings::GetInt(Id::TouchButtonSteering)));
                 if (s_steer != 0.0f || steerDirection != 0)
                 {
                     lx = s_steer;
@@ -624,6 +836,35 @@ namespace hid::touch
         return steered;
     }
 
+    void GameRumble(uint16_t low, uint16_t high)
+    {
+        // A knock: the request jumps by over 0.3 of full to over 0.4 (the engine's and the
+        // road's steady hum doesn't), one pulse in 150 ms at most.
+        static float last = 0;
+        static Uint64 lastKnock = 0;
+        const float strength = float(std::max(low, high)) / 65535.0f;
+        const Uint64 now = SDL_GetTicksNS();
+        if (s_shown && strength > 0.4f && strength - last > 0.3f && now - lastKnock > 150'000'000 &&
+            HapticsMode() == settings::TouchHapticsMode::TapsAndKnocks)
+        {
+            Buzz(strength, 60);
+            lastKnock = now;
+            if (s_log)
+                fprintf(stderr, "[touch] knock %.2f\n", strength);
+        }
+        last = strength;
+    }
+
+    void EditLayout()
+    {
+        s_editing = true;
+        s_editMode = s_mode;
+        s_drags.clear();
+        s_barFingers.clear();
+        Release();
+        fprintf(stderr, "[touch] edit layout: %s\n", s_editMode == Mode::Driving ? "driving" : "menus");
+    }
+
     bool Visible()
     {
         return s_shown;
@@ -636,9 +877,28 @@ namespace hid::touch
         float w = 0, h = 0;
         if (!WindowSize(w, h))
             return false;
-        view.layout = CurrentLayout(w, h);
+        view.layout = CurrentLayout(w, h, s_editing ? s_editMode : s_mode);
         view.width = w;
         view.height = h;
+        view.editing = s_editing;
+        if (s_editing)
+        {
+            view.editingDriving = s_editMode == Mode::Driving;
+            view.editBar = CurrentEditBar(w, h);
+            view.editBarPressed.assign(view.editBar.size(), false);
+            for (const auto& [id, kind] : s_barFingers)
+                for (size_t i = 0; i < view.editBar.size(); i++)
+                    if (view.editBar[i].kind == kind)
+                        view.editBarPressed[i] = true;
+            view.pressed.assign(view.layout.widgets.size(), false);
+            for (const auto& [id, drag] : s_drags)
+                for (size_t i = 0; i < view.layout.widgets.size(); i++)
+                    if (Key(s_editMode, view.layout.widgets[i]) == drag.key)
+                        view.pressed[i] = true;
+            view.opacity = std::max(float(settings::GetInt(Id::TouchOpacity)) / 100.0f, 0.7f);
+            view.tilt = false;
+            return true;
+        }
         view.opacity = float(settings::GetInt(Id::TouchOpacity)) / 100.0f;
         view.pressed.assign(view.layout.widgets.size(), false);
         view.stickHeld = false;

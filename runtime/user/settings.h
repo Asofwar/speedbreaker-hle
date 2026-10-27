@@ -88,8 +88,10 @@ namespace settings
         // page shows itself only where there is a touchscreen.
         TouchControls,     // TouchControlsMode
         TouchSteering,     // TouchSteeringMode
+        TouchButtonSteering,  // TouchButtonSteeringSpeed: how fast the steering buttons turn the wheel
         TouchAutoGas,
         TouchGestures,     // the menus' tap, two-finger tap and swipes
+        TouchHaptics,      // TouchHapticsMode: the device's vibration for the controls and the game's knocks
         TouchSize,         // the controls' size, %
         TouchOpacity,      // %
         TiltSensitivity,   // degrees of tilt for full lock
@@ -243,6 +245,12 @@ namespace settings
     // Touch > Steering: two buttons, the phone's tilt, or a stick where the
     // finger lands (hid/touch_layout.h's Steering has the same values).
     enum class TouchSteeringMode : int32_t { Buttons = 0, Tilt = 1, Stick = 2 };
+    // Touch > Button Steering: full lock in 0.08 s, 0.14 s or 0.25 s
+    // (hid/touch_layout.h's SteerInSeconds).
+    enum class TouchButtonSteeringSpeed : int32_t { Quick = 0, Normal = 1, Smooth = 2 };
+    // Touch > Haptics: none, a tick for each control pressed, or that and a
+    // short pulse for each knock the game's rumble asks for (a crash).
+    enum class TouchHapticsMode : int32_t { Off = 0, Taps = 1, TapsAndKnocks = 2 };
 
     struct EnumEntry
     {

@@ -90,6 +90,40 @@ int main()
         CHECK(HitTest(s, 640, 360) == -1, "outside the stick's zone");
     }
 
+    // The player's places: a moved control sits there (kept inside the window); the file
+    // reads back what it wrote, and skips what isn't a place.
+    {
+        const Layout plain = Build(Mode::Driving, Steering::Buttons, false, 1280, 720, 1.0f);
+        const Widget& gas = plain.widgets[size_t(Find(plain, Kind::Gas))];
+        Placements p;
+        p[Key(Mode::Driving, gas)] = Point{ 0.5f, 0.5f };
+        p["menus button 1000"] = Point{ 0.1f, 0.1f };
+        const Layout moved = Build(Mode::Driving, Steering::Buttons, false, 1280, 720, 1.0f, &p);
+        const Widget& g = moved.widgets[size_t(Find(moved, Kind::Gas))];
+        CHECK(g.x == 640.0f && g.y == 360.0f, "the gas pedal moved: %g %g", g.x, g.y);
+        CHECK(moved.widgets.size() == plain.widgets.size(), "the same controls");
+        p[Key(Mode::Driving, gas)] = Point{ 1.0f, 1.0f };
+        const Layout edge = Build(Mode::Driving, Steering::Buttons, false, 1280, 720, 1.0f, &p);
+        const Widget& e = edge.widgets[size_t(Find(edge, Kind::Gas))];
+        CHECK(e.x + e.r <= 1280.0f && e.y + e.r <= 720.0f, "kept inside the window");
+        CHECK(Key(Mode::Menu, Widget{ Kind::Button, button::A }) == "menus button 1000" && Key(Mode::Driving, gas) == "driving gas", "keys");
+        const Placements back = ParsePlacements(FormatPlacements(p) + "junk\nmenus button 2000 5 5\n");
+        CHECK(back.size() == 2 && back.at("driving gas").x == 1.0f && std::fabs(back.at("menus button 1000").y - 0.1f) < 1e-4f,
+            "the file round trip, junk and out-of-range places skipped (%zu)", back.size());
+        const std::vector<Widget> bar = EditBar(1280, 720, 1.0f);
+        CHECK(bar.size() == 3 && Grab(bar, bar[2].x, bar[2].y) == 2 && Grab(bar, 0, 700) == -1, "the edit bar");
+    }
+
+    // Sliding: the steering buttons with each other, the pedals, the D-pad; nothing else.
+    {
+        CHECK(SlideGroup(Kind::SteerLeft, 0) == SlideGroup(Kind::SteerRight, 0) && SlideGroup(Kind::SteerLeft, 0) != 0, "steering");
+        CHECK(SlideGroup(Kind::Gas, 0) == SlideGroup(Kind::Brake, 0) && SlideGroup(Kind::Gas, 0) != SlideGroup(Kind::SteerLeft, 0), "pedals");
+        CHECK(SlideGroup(Kind::Button, button::DpadUp) == SlideGroup(Kind::Button, button::DpadRight) &&
+              SlideGroup(Kind::Button, button::DpadUp) != 0, "the D-pad");
+        CHECK(SlideGroup(Kind::Button, button::A) == 0 && SlideGroup(Kind::Button, button::B) == 0 && SlideGroup(Kind::Settings, 0) == 0 &&
+              SlideGroup(Kind::Stick, 0) == 0, "buttons keep their finger");
+    }
+
     // The steering buttons ease: to full lock in kSteerInSeconds, back faster, and the
     // other way through the centre.
     {
@@ -110,6 +144,9 @@ int main()
         CHECK(back < frames && x == 0.0f, "back to the centre in %d frames", back);
         CHECK(EaseSteering(0.5f, -1, 1.0f / 60) < 0.5f && EaseSteering(0.5f, 1, 1.0f / 60) > 0.5f, "the way it's held");
         CHECK(EaseSteering(0.3f, 0, 1.0f) == 0.0f && EaseSteering(-0.3f, 0, 1.0f) == 0.0f, "a long frame stops at the centre");
+        // Button Steering: Quick reaches full lock sooner than Normal, Smooth later.
+        CHECK(SteerInSeconds(0) < SteerInSeconds(1) && SteerInSeconds(1) < SteerInSeconds(2) && SteerInSeconds(1) == kSteerInSeconds, "speeds");
+        CHECK(EaseSteering(0, 1, 0.05f, SteerInSeconds(0)) > EaseSteering(0, 1, 0.05f, SteerInSeconds(2)), "quick is quicker");
     }
 
     // The stick: the finger's offset over the travel, up positive, inside the circle.

@@ -79,12 +79,15 @@ namespace ui
                 dl->AddCircleFilled(knob, travel * 0.45f, Colour(255, 255, 255, alpha * (v.stickHeld ? 0.9f : 0.55f)), 32);
                 continue;
             }
+            // Idle, a faint disc with its ring and label, so the game's HUD under it (the map,
+            // the speedometer) still reads; held, filled.
             const bool pedal = w.kind == Kind::Gas || w.kind == Kind::Brake;
             const ImU32 fill = pressed ? Colour(255, 190, 60, alpha * 0.85f)
-                : pedal && w.kind == Kind::Gas ? Colour(30, 90, 40, alpha * 0.6f)
-                : pedal ? Colour(100, 30, 30, alpha * 0.6f) : Colour(0, 0, 0, alpha * 0.5f);
+                : pedal && w.kind == Kind::Gas ? Colour(30, 90, 40, alpha * 0.35f)
+                : pedal ? Colour(100, 30, 30, alpha * 0.35f) : Colour(0, 0, 0, alpha * 0.25f);
             dl->AddCircleFilled(c, r, fill, 48);
-            dl->AddCircle(c, r, Colour(255, 255, 255, alpha * (pressed ? 1.0f : 0.75f)), 48, std::max(1.5f, 2.5f * s));
+            const ImU32 ring = v.editing ? Colour(255, 200, 60, alpha) : Colour(255, 255, 255, alpha * (pressed ? 1.0f : 0.7f));
+            dl->AddCircle(c, r, ring, 48, std::max(1.5f, (v.editing ? 3.5f : 2.5f) * s));
             const ImU32 ink = Colour(255, 255, 255, std::min(1.0f, alpha * 1.6f));
             if (w.glyph != Glyph::Text)
             {
@@ -96,6 +99,33 @@ namespace ui
             const float fontSize = std::min(r * 0.62f, r * 1.7f / (0.6f * float(letters)));
             const ImVec2 size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, w.label);
             dl->AddText(font, fontSize, ImVec2(c.x - size.x * 0.5f, c.y - size.y * 0.5f), ink, w.label);
+        }
+        if (v.editing)
+        {
+            // Edit Layout's bar and what to do.
+            for (size_t i = 0; i < v.editBar.size(); i++)
+            {
+                const auto& w = v.editBar[i];
+                const ImVec2 c(w.x * sx, w.y * sy);
+                const float r = w.r * s;
+                const bool done = w.kind == Kind::EditDone;
+                dl->AddCircleFilled(c, r, v.editBarPressed[i] ? Colour(255, 190, 60, 0.95f) : done ? Colour(30, 110, 50, 0.85f) : Colour(0, 0, 0, 0.75f), 48);
+                dl->AddCircle(c, r, Colour(255, 255, 255, 0.9f), 48, std::max(1.5f, 2.5f * s));
+                const char* label = w.kind == Kind::EditSwitch ? (v.editingDriving ? "DRIVING" : "MENUS") : w.label;
+                const float fontSize = std::min(r * 0.5f, r * 1.7f / (0.6f * float(std::max<size_t>(1, std::strlen(label)))));
+                const ImVec2 size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, label);
+                dl->AddText(font, fontSize, ImVec2(c.x - size.x * 0.5f, c.y - size.y * 0.5f), Colour(255, 255, 255, 1.0f), label);
+            }
+            if (!v.editBar.empty())
+            {
+                const char* hint = "Drag the controls into place. DRIVING/MENUS: the other layout. RESET: its defaults. DONE: save.";
+                const float fontSize = ImGui::GetFontSize();
+                const ImVec2 size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, hint);
+                const ImVec2 at(display.x * 0.5f - size.x * 0.5f, (v.editBar[0].y + v.editBar[0].r) * sy + 0.6f * fontSize);
+                dl->AddRectFilled(ImVec2(at.x - 0.5f * fontSize, at.y - 0.25f * fontSize), ImVec2(at.x + size.x + 0.5f * fontSize, at.y + size.y + 0.25f * fontSize),
+                    Colour(0, 0, 0, 0.7f), 0.3f * fontSize);
+                dl->AddText(font, fontSize, at, Colour(255, 255, 255, 1.0f), hint);
+            }
         }
         if (v.tilt)
         {

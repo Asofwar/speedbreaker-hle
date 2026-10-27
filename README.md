@@ -586,9 +586,14 @@ Vibration (On).
 **Touch** (shown where there is a touchscreen: Android, a Steam Deck, a PC's): Touch Controls
 (Auto: on the screen while no controller or wheel is connected, and on a PC while there is no
 keyboard either; On; Off), Steering (Buttons, Tilt or
-Stick), Auto Gas (Off; On: full throttle unless you brake, and the gas button becomes nitrous),
-Menu Gestures (On), Button Size (100%), Button Opacity (50%), and Tilt for Full Lock (25
-degrees). While you drive the screen has the steering on the left and gas, brake, nitrous, the
+Stick), Button Steering (Normal: full lock in 0.14 s; Quick 0.08 s, Smooth 0.25 s), Auto Gas
+(Off; On: full throttle unless you brake, and the gas button becomes nitrous), Menu Gestures
+(On), Haptics (Taps and Knocks: the device ticks as you press a control and pulses for a crash;
+Taps; Off), Button Size (100%), Button Opacity (50%), and Tilt for Full Lock (25 degrees). A
+finger slides between the steering buttons, between gas and brake and along the D-pad without
+lifting. **Edit Layout** shows the controls to drag where your thumbs want them (and clear of the
+game's map and speedometer): DRIVING/MENUS switches to the other layout, RESET puts its controls
+back, DONE saves them (`touch_layout.txt` beside `settings.toml`). While you drive the screen has the steering on the left and gas, brake, nitrous, the
 handbrake and Speedbreaker on the right, with the rear view, the camera, the reset after a crash
 and the pause along the top, as the game's own Controls page sets them; in the game's menus,
 the pause menu and the map it has a D-pad, A B X Y, LB RB LT RT, Start and Back. In the menus a

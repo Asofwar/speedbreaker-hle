@@ -1336,6 +1336,7 @@ namespace hid
             low = s_rumbleLow;
             high = s_rumbleHigh;
         }
+        touch::GameRumble(low, high);  // a crash's knock on the device's vibrator (touch controls shown)
         static bool vibration = true;
         bool vibrationChanged = false;
         if (bool on = settings::GetBool(settings::Id::Vibration); on != vibration)

@@ -21,6 +21,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <map>
+#include <string>
 #include <vector>
 
 namespace hid::touchlayout
@@ -47,6 +50,8 @@ namespace hid::touchlayout
         Brake,       // the left trigger
         LeftTrigger, RightTrigger,  // the menus' (the map zooms with them)
         Settings,    // opens the runtime's settings menu
+        // Edit Layout's bar (EditBar): which layout is edited, its defaults back, done.
+        EditSwitch, EditReset, EditDone,
     };
 
     enum class Glyph : uint8_t { Text, Left, Right, Up, Down };
@@ -69,6 +74,27 @@ namespace hid::touchlayout
         float stickZoneRight = 0, stickZoneTop = 0, stickTravel = 0;
     };
 
+    // The player's own places for controls (Settings > Touch > Edit Layout): each moved
+    // control's centre as fractions of the area's width and height, by Key.
+    struct Point { float x = 0, y = 0; };
+    using Placements = std::map<std::string, Point>;
+
+    // A control's name in Placements (and touch_layout.txt): its layout, what it is, and
+    // its button ("driving gas", "menus button 1000").
+    inline std::string Key(Mode mode, const Widget& w)
+    {
+        static const char* const kKinds[] = { "button", "steer_left", "steer_right", "stick", "gas", "brake", "lt", "rt", "settings",
+                                              "edit_switch", "edit_reset", "edit_done" };
+        std::string key = std::string(mode == Mode::Driving ? "driving " : "menus ") + kKinds[size_t(w.kind)];
+        if (w.kind == Kind::Button)
+        {
+            char bit[8];
+            snprintf(bit, sizeof(bit), " %04X", unsigned(w.button));
+            key += bit;
+        }
+        return key;
+    }
+
     // `scale`: Settings > Touch > Button Size (0.6 to 1: at 1 the two columns of
     // controls fill the window's width or height, whichever runs out first).
     inline float Unit(float width, float height, float scale)
@@ -76,7 +102,8 @@ namespace hid::touchlayout
         return std::max(1.0f, std::min(height / 100.0f, width / 170.0f) * scale);
     }
 
-    inline Layout Build(Mode mode, Steering steering, bool autoGas, float width, float height, float scale)
+    inline Layout Build(Mode mode, Steering steering, bool autoGas, float width, float height, float scale,
+        const Placements* placed = nullptr)
     {
         Layout l;
         const float u = l.unit = Unit(width, height, scale);
@@ -139,7 +166,86 @@ namespace hid::touchlayout
             add(Kind::Button, button::X, fx - d, fy, r, "X");
             add(Kind::Button, button::Y, fx, fy - d, r, "Y");
         }
+        // The player's own places, kept inside the area; a moved stick takes the zone
+        // around and to the left of where it now rests.
+        if (placed)
+            for (Widget& w : l.widgets)
+                if (auto it = placed->find(Key(mode, w)); it != placed->end())
+                {
+                    w.x = std::clamp(it->second.x * W, w.r, std::max(w.r, W - w.r));
+                    w.y = std::clamp(it->second.y * H, w.r, std::max(w.r, H - w.r));
+                    if (w.kind == Kind::Stick)
+                    {
+                        l.stickZoneRight = std::min(W, w.x + w.r * 1.6f);
+                        l.stickZoneTop = std::max(0.0f, w.y - w.r * 1.6f);
+                    }
+                }
         return l;
+    }
+
+    // Edit Layout's bar, along the top in the middle: the layout being edited (tap: the
+    // other one), its defaults back, done.
+    inline std::vector<Widget> EditBar(float width, float height, float scale)
+    {
+        const float u = Unit(width, height, scale), m = 4.0f * u, y = m + 7.0f * u, r = 7.0f * u;
+        return {
+            Widget{ Kind::EditSwitch, 0, width * 0.5f - 17.0f * u, y, r, "LAYOUT" },
+            Widget{ Kind::EditReset, 0, width * 0.5f, y, r, "RESET" },
+            Widget{ Kind::EditDone, 0, width * 0.5f + 17.0f * u, y, r, "DONE" },
+        };
+    }
+
+    // Edit Layout: the control under a finger, the stick's circle included; -1: none.
+    inline int Grab(const std::vector<Widget>& widgets, float x, float y)
+    {
+        int best = -1;
+        float bestDistance = 0;
+        for (size_t i = 0; i < widgets.size(); i++)
+        {
+            const float distance = std::hypot(x - widgets[i].x, y - widgets[i].y) / widgets[i].r;
+            if (distance <= 1.2f && (best < 0 || distance < bestDistance))
+            {
+                best = int(i);
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    // touch_layout.txt: one line per moved control, "<key> <x> <y>" (Key's words, then
+    // the fractions); anything else is skipped.
+    inline Placements ParsePlacements(const std::string& text)
+    {
+        Placements p;
+        size_t pos = 0;
+        while (pos < text.size())
+        {
+            size_t end = text.find('\n', pos);
+            if (end == std::string::npos)
+                end = text.size();
+            const std::string line = text.substr(pos, end - pos);
+            pos = end + 1;
+            const size_t lastSpace = line.find_last_of(' ');
+            const size_t prevSpace = lastSpace == std::string::npos || lastSpace == 0 ? std::string::npos : line.find_last_of(' ', lastSpace - 1);
+            if (prevSpace == std::string::npos || prevSpace == 0)
+                continue;
+            float x = 0, y = 0;
+            if (sscanf(line.c_str() + prevSpace, " %f %f", &x, &y) != 2 || !(x >= 0 && x <= 1 && y >= 0 && y <= 1))
+                continue;
+            p[line.substr(0, prevSpace)] = Point{ x, y };
+        }
+        return p;
+    }
+    inline std::string FormatPlacements(const Placements& p)
+    {
+        std::string text;
+        for (const auto& [key, at] : p)
+        {
+            char numbers[48];
+            snprintf(numbers, sizeof(numbers), " %.4f %.4f\n", double(at.x), double(at.y));
+            text += key + numbers;
+        }
+        return text;
     }
 
     // A layout built for an area of the window (its safe area: clear of a camera's
@@ -184,14 +290,33 @@ namespace hid::touchlayout
         return -1;
     }
 
+    // Controls a finger slides between without lifting: the two steering buttons, the
+    // two pedals, the D-pad's four. 0: none (a finger keeps what it landed on, wherever
+    // it goes, so a thumb drifting off a button keeps holding it).
+    inline int SlideGroup(Kind kind, uint16_t bit)
+    {
+        if (kind == Kind::SteerLeft || kind == Kind::SteerRight)
+            return 1;
+        if (kind == Kind::Gas || kind == Kind::Brake)
+            return 2;
+        if (kind == Kind::Button && bit != 0 && (bit & ~(button::DpadUp | button::DpadDown | button::DpadLeft | button::DpadRight)) == 0)
+            return 3;
+        return 0;
+    }
+
     // The steering buttons: the stick moves toward the held direction (both or none:
-    // the centre), to full lock in kSteerInSeconds, back to the centre faster.
-    constexpr float kSteerInSeconds = 0.14f, kSteerOutSeconds = 0.08f;
-    inline float EaseSteering(float current, int direction, float dt)
+    // the centre), to full lock in `inSeconds` (Settings > Touch > Button Steering), back
+    // to the centre (or through it the other way) in under two thirds of that.
+    constexpr float kSteerInSeconds = 0.14f;  // Normal
+    inline float SteerInSeconds(int buttonSteering)  // settings::TouchButtonSteering's values
+    {
+        return buttonSteering == 0 ? 0.08f : buttonSteering == 2 ? 0.25f : kSteerInSeconds;
+    }
+    inline float EaseSteering(float current, int direction, float dt, float inSeconds = kSteerInSeconds)
     {
         const float target = float(std::clamp(direction, -1, 1));
         const bool returning = target == 0.0f || (current != 0.0f && (current > 0) != (target > 0));
-        const float step = dt / (returning ? kSteerOutSeconds : kSteerInSeconds);
+        const float step = dt / (returning ? inSeconds * 0.6f : inSeconds);
         if (current < target)
             return std::min(target, current + step);
         return std::max(target, current - step);

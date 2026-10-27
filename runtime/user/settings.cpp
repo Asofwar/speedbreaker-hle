@@ -187,6 +187,18 @@ namespace settings
             { int32_t(TouchSteeringMode::Stick), "stick", "Stick" },
         };
 
+        constexpr EnumEntry kTouchButtonSteeringEntries[] = {
+            { int32_t(TouchButtonSteeringSpeed::Quick), "quick", "Quick" },
+            { int32_t(TouchButtonSteeringSpeed::Normal), "normal", "Normal" },
+            { int32_t(TouchButtonSteeringSpeed::Smooth), "smooth", "Smooth" },
+        };
+
+        constexpr EnumEntry kTouchHapticsEntries[] = {
+            { int32_t(TouchHapticsMode::Off), "off", "Off" },
+            { int32_t(TouchHapticsMode::Taps), "taps", "Taps" },
+            { int32_t(TouchHapticsMode::TapsAndKnocks), "taps_and_knocks", "Taps and Knocks" },
+        };
+
         constexpr EnumEntry kShadowFilteringEntries[] = {
             { int32_t(ShadowFilteringMode::Original), "original", "Original" },
             { int32_t(ShadowFilteringMode::Pcss), "pcss", "Soft (PCSS)" },
@@ -501,6 +513,10 @@ namespace settings
               .table = "touch", .key = "steering", .label = "Steering",
               .description = "Buttons: hold left or right, the car steers in a moment. Tilt: turn the device as a wheel. Stick: put a finger down on the left and move it.",
               .env = "NFSMW_TOUCH_STEERING", .defaultValue = double(TouchSteeringMode::Buttons), .entries = kTouchSteeringEntries },
+            { .id = Id::TouchButtonSteering, .category = Category::Touch, .type = Type::Enum, .apply = Apply::Live,
+              .table = "touch", .key = "button_steering", .label = "Button Steering",
+              .description = "How fast the steering buttons turn the wheel to full lock: Quick 0.08 s (sharp corrections), Normal 0.14 s, Smooth 0.25 s (gentle at speed).",
+              .env = "NFSMW_TOUCH_BUTTON_STEERING", .defaultValue = double(TouchButtonSteeringSpeed::Normal), .entries = kTouchButtonSteeringEntries },
             { .id = Id::TouchAutoGas, .category = Category::Touch, .type = Type::Bool, .apply = Apply::Live,
               .table = "touch", .key = "auto_gas", .label = "Auto Gas",
               .description = "Full throttle while driving unless you brake. The gas button becomes nitrous.",
@@ -509,6 +525,10 @@ namespace settings
               .table = "touch", .key = "gestures", .label = "Menu Gestures",
               .description = "In the game's menus: tap to choose (A), tap with two fingers to go back (B), swipe to move (D-pad).",
               .env = "NFSMW_TOUCH_GESTURES", .defaultValue = 1 },
+            { .id = Id::TouchHaptics, .category = Category::Touch, .type = Type::Enum, .apply = Apply::Live,
+              .table = "touch", .key = "haptics", .label = "Haptics",
+              .description = "The device vibrates a little as a control is pressed (Taps), and with each knock the game sends (a crash) too. Vibration (Input) turns it off as well.",
+              .env = "NFSMW_TOUCH_HAPTICS", .defaultValue = double(TouchHapticsMode::TapsAndKnocks), .entries = kTouchHapticsEntries },
             { .id = Id::TouchSize, .category = Category::Touch, .type = Type::Int, .apply = Apply::Live,
               .table = "touch", .key = "size", .label = "Button Size",
               .description = "How big the on-screen controls are. 100% is as big as fits the screen.",

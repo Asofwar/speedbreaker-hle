@@ -20,6 +20,12 @@
 //     put down, moved and lifted at seconds since launch (window fractions),
 //     as SDL finger events of a touchscreen of its own; the controls show
 //     wherever this is set (tests on a PC: vptest.ps1 shoots them).
+//   - A finger slides between the steering buttons, between the pedals and
+//     along the D-pad without lifting; off every control it keeps holding the
+//     one it was on.
+//   - Haptics (Android): the device's vibrator ticks as a control is pressed
+//     and pulses for a knock in the game's rumble (GameRumble).
+//   - NFSMW_TOUCH_EDIT=<s> (tests): Edit Layout at that many seconds after launch.
 //   - NFSMW_INPUT_LOG=1 also logs each control a finger presses or lets go.
 #pragma once
 #include <cstdint>
@@ -40,6 +46,10 @@ namespace hid::touch
     bool Contribute(bool controllerOpen, uint16_t& buttons, float& lx, float& ly, float& lt, float& rt);
     // Fingers let go (a suspension, the window losing focus).
     void Release();
+    // Main thread, from hid::Update: the rumble the game asks for (XInput's motors). While
+    // the controls are shown, a knock in it (a crash) is a short pulse of the device's
+    // vibration (Settings > Touch > Haptics).
+    void GameRumble(uint16_t low, uint16_t high);
 
     // What ui/touch_overlay.cpp draws, laid out for the window's points.
     struct View
@@ -52,7 +62,16 @@ namespace hid::touch
         float stickOriginX = 0, stickOriginY = 0, stickX = 0, stickY = 0;
         float steering = 0;  // the left stick's X the touch gives (the tilt's indicator)
         bool tilt = false;
+        // Edit Layout: its bar, and which layout is being edited.
+        bool editing = false, editingDriving = false;
+        std::vector<touchlayout::Widget> editBar;
+        std::vector<bool> editBarPressed;
     };
+    // Settings > Touch > Edit Layout (main thread): the layout on screen's controls to
+    // drag into place, the game getting nothing meanwhile; the bar along the top switches
+    // to the other layout, puts the defaults back, and saves (GetUserPath()/
+    // touch_layout.txt, read at the first use).
+    void EditLayout();
     // Main thread: the controls are shown (as of the last hid::Update).
     bool Visible();
     // Main thread: false while the controls aren't shown.

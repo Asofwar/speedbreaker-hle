@@ -815,6 +815,18 @@ namespace ui
                 s_describedCheat = -2;
         }
 
+        // Settings > Touch > Edit Layout: the menu closes, and the touch controls of the
+        // layout on screen can be dragged into place (hid/touch.h's EditLayout).
+        void TouchLayoutRow(float valueWidth)
+        {
+            bool described = false;
+            if (ActionRow("touch-layout", "Edit Layout", "Edit", valueWidth, described))
+            {
+                CloseSettings();
+                hid::touch::EditLayout();
+            }
+        }
+
         // Settings > Game > Take Photo: the menu closes, and the next frame's
         // scene is saved without its HUD (ui/photo.cpp; F12 in the game).
         void PhotoRow(float valueWidth)
@@ -1195,6 +1207,8 @@ namespace ui
                                 }
                         if (category == Category::Wheel)
                             CalibrateRow(valueWidth);
+                        if (category == Category::Touch)
+                            TouchLayoutRow(valueWidth);
                         if (category == Category::Advanced)
                         {
                             BugReportRow(valueWidth);
