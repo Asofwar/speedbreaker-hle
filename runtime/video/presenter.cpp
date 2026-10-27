@@ -5968,9 +5968,11 @@ void main()
 
     bool FullscreenLocked()
     {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
         // An iOS app has the whole screen: windowed, it only showed the
-        // status bar over the picture.
+        // status bar over the picture. So does an Android one (SDL's
+        // fullscreen there is the immersive mode: no status or navigation
+        // bar over the picture and the touch controls' top row).
         return true;
 #else
         return s_gameMode;
