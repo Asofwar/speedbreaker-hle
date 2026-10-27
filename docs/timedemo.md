@@ -371,8 +371,12 @@ at most 2 levels apart). ThinLTO alone gave +0.4% fps and 1% less CPU on the
 guest's threads. On Windows (a PC with an i9-14900K and an RTX 5080, where the
 command processor bounds the race: 1800 steps from 1530, uncapped, 3
 alternated pairs) ThinLTO gave 224.0 -> 226.7 fps (+1.2%, every pair), the
-command processor 4.27 -> 4.23 ms a frame, the same trace hash. On Android
-(Turnip on an Adreno 840, GPU-bound) it changed nothing measurable.
+command processor 4.27 -> 4.23 ms a frame, the same trace hash. On Linux in
+the sb-build container (headless: the game's own threads and the command
+processor without the renderer, the same window, 3 alternated pairs) 334.5
+-> 343.2 fps, the game's frame 2.990 -> 2.914 ms (-2.5%), the same trace
+hash. On Android (Turnip on an Adreno 840, GPU-bound) it changed nothing
+measurable.
 
 Notes:
 
