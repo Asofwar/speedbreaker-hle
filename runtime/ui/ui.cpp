@@ -778,7 +778,7 @@ namespace ui
 #endif
             if (toggle && !e.key.repeat && !s_modal)
             {
-                s_settingsOpen ? CloseSettings() : OpenSettings();
+                ToggleSettings();
                 return;
             }
             // F12: a photo (ui/photo.cpp), with the menu closed.
@@ -1241,6 +1241,13 @@ namespace ui
     bool SettingsOpen()
     {
         return s_settingsOpen;
+    }
+
+    void ToggleSettings()
+    {
+        if (!s_ready || s_modal)
+            return;
+        s_settingsOpen ? CloseSettings() : OpenSettings();
     }
 
     SDL_Window* GetWindow()

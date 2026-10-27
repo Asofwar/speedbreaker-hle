@@ -55,7 +55,7 @@ ninja -C "$BUILD" -j"$JOBS"
 # shellcheck disable=SC2054  # -Wl,-u,<symbol> is one linker option: its commas are its own
 LIBS=(
     -force_load "$BUILD/runtime/libSpeedBreaker.a"
-    "$BUILD/recomp/libNfsmwRecompLib.a" "$BUILD/runtime/libXenonUtilsLite.a" "$BUILD/runtime/libo1heap.a"
+    "$BUILD/recomp/libNfsmwRecompLib.a" $( [ -f "$BUILD/recomp/libNfsmwRecompPalEsLib.a" ] && echo "$BUILD/recomp/libNfsmwRecompPalEsLib.a" ) "$BUILD/runtime/libXenonUtilsLite.a" "$BUILD/runtime/libo1heap.a"
     "$BUILD/runtime/libimgui.a"
     "$PREFIX/lib/libSDL3.a"
     "$PREFIX/lib/libglslang.a" "$PREFIX/lib/libglslang-default-resource-limits.a"

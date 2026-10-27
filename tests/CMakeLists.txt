@@ -61,6 +61,9 @@ sb_test(block_ranges_test)
 sb_test(memory_plan_test)
 # A discrete GPU's PCIe link for the logs (gpu/pcie_link.h, header only; issue #40).
 sb_test(pcie_link_test)
+# Deferred shadow resolves (gpu/shadow_lend.h, header only): their decisions,
+# and a model of the renderer's against resolving every time.
+sb_test(shadow_lend_test)
 sb_test(zpd_report_test)
 # The resolve shader's 24-bit depth pack (gpu/depth24_glsl.h), header only;
 # renderer.cpp is read to check its resolve shader uses it.
@@ -168,6 +171,11 @@ sb_test(picture_fit_test SOURCES ${RT}/video/picture_fit.cpp)
 sb_test(native_rows_test SOURCES ${RT}/video/picture_fit.cpp)
 # The open world's race rules and records (net/mp_race.h).
 sb_test(mp_race_test SOURCES ${RT}/net/mp_race.cpp)
+# Settings > Video > Internal Resolution's labels name the size each entry
+# renders on this screen (video::ResolutionLabel): 16:9, a Steam Deck filled
+# and at 16:9, 21:9; the settings file's tokens unchanged, the menu using them.
+sb_test(resolution_label_test SOURCES ${RT}/video/picture_fit.cpp
+    ARGS ${RT}/user/settings.cpp ${RT}/ui/settings_menu.cpp ${RT}/gpu/renderer.cpp)
 # Which Vulkan device the presenter draws with, and its log line
 # (video/gpu_choice.h, header only).
 sb_test(gpu_choice_test)
@@ -312,6 +320,9 @@ sb_test(light_trails_test)
 sb_test(hfr_blend_test)
 sb_test(hfr_schedule_test)
 sb_test(hfr_grid_test)
+# How long Smooth Motion stays at 60 after a picture on the wrong refresh, off
+# Apple's systems (game/hfr_late_hold.h, header only).
+sb_test(hfr_late_hold_test)
 # The guest clock across suspensions, on real sleeps: its thresholds hold on a
 # quiet machine, not under a parallel ctest or on a shared CI runner (timing).
 sb_test(guest_time_test SOURCES ${RT}/cpu/guest_time.cpp LABELS timing)
@@ -371,8 +382,15 @@ target_include_directories(settings_test SYSTEM PRIVATE ${ROOT}/tools/XenonRecom
 # goes in a picked folder and what is refused, on planted facts and in a
 # scratch folder with a sandbox HOME (the installer's file calls through the
 # platform layer, platform/file_io.h). POSIX only (mkdtemp, chmod, ACLs and
-# links in its disk checks); the screen hides the entry on Windows until
-# placement.cpp is ported there.
+# links in its disk checks); on Windows install_folder_win_test checks the
+# Windows side on a real disk (a drive's root, OneDrive, writability).
+if(WIN32)
+    sb_test(install_folder_win_test SOURCES ${RT}/install/placement.cpp ${RT}/install/installer.cpp ${RT}/install/locate.cpp
+        ${RT}/install/manifest.cpp ${RT}/install/result.cpp ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp
+        ${RT}/user/portable.cpp ${RT}/platform/win32/file_io.cpp ${RT}/platform/win32/folders.cpp
+        ARGS ${CMAKE_BINARY_DIR}/install_folder_scratch)  # not beside the test: that's its "own folder", refused
+    target_link_libraries(install_folder_win_test PRIVATE shell32 ole32)
+endif()
 if(NOT WIN32)
     sb_test(install_folder_test SOURCES ${RT}/install/placement.cpp ${RT}/install/installer.cpp ${RT}/install/locate.cpp
         ${RT}/install/manifest.cpp ${RT}/install/result.cpp ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp
@@ -394,10 +412,18 @@ if(NOT WIN32)
         ${RT}/install/manifest.cpp ${RT}/install/result.cpp ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp
         ${RT}/user/portable.cpp ${SB_FILE_IO_SOURCES}
         ARGS ${CMAKE_BINARY_DIR}/startup_game_files_scratch)
+    # The installer's regions (install/manifest.h): the USA and the PAL
+    # (Spanish) disc told apart, and either's install found, in a scratch
+    # folder with a sandbox HOME.
+    sb_test(region_manifest_test SOURCES ${RT}/install/placement.cpp ${RT}/install/installer.cpp ${RT}/install/locate.cpp
+        ${RT}/install/manifest.cpp ${RT}/install/result.cpp ${RT}/install/disc_source.cpp ${RT}/install/sha256.cpp
+        ${RT}/user/portable.cpp ${SB_FILE_IO_SOURCES}
+        ARGS ${CMAKE_BINARY_DIR}/region_manifest_scratch)
     if(APPLE AND NOT IOS)
         target_link_libraries(install_folder_test PRIVATE "-framework CoreFoundation")  # placement.cpp's iCloud check
         target_link_libraries(portable_test PRIVATE "-framework CoreFoundation")
         target_link_libraries(startup_game_files_test PRIVATE "-framework CoreFoundation")
+        target_link_libraries(region_manifest_test PRIVATE "-framework CoreFoundation")
     endif()
     # Saves written atomically (kernel/vfs.h, header only): the temporary files'
     # names, short writes, whole-file writes that keep the old file when they
@@ -411,6 +437,27 @@ if(NOT WIN32)
     # profile_settings.bin from an absolute folder, as before otherwise;
     # imports_user.cpp and xam.cpp are read. POSIX only (setenv).
     sb_test(timedemo_save_dir_test ARGS ${RT})
+endif()
+# The PAL (Spanish) release's hook addresses (runtime/region/region.h):
+# every guest address the runtime names has a PAL one, every hook is an
+# SB_HOOK, code and .rdata constants go through region::Addr, none is in a
+# function the PAL build changed. -DSB_REGION_SURVEY=<folder with mw_usa/ and
+# mw_pal/ (image.bin, xexsurvey.txt; mw_pal/funcmap.tsv)>, decrypted from the
+# player's own discs, also checks the bytes at both addresses match and that
+# the table and config/pal-es/ are what survey/region_map.py writes.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    set(SB_REGION_SURVEY "" CACHE PATH "Decrypted USA and PAL images for region_addresses_check (optional)")
+    if(SB_REGION_SURVEY)
+        add_test(NAME region_addresses_check COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/region_addresses_check.py
+            ${ROOT} ${SB_REGION_SURVEY}/mw_usa ${SB_REGION_SURVEY}/mw_pal ${SB_REGION_SURVEY}/mw_pal/funcmap.tsv)
+    else()
+        add_test(NAME region_addresses_check COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/region_addresses_check.py ${ROOT})
+    endif()
+    # scripts/region_ppc.py on both forms of XenonRecomp's output (a Mac's
+    # wrapper form; Linux's and clang-cl's alias form, with LF or CRLF): the
+    # same namespaced files from each.
+    add_test(NAME region_ppc_test COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/region_ppc_test.py ${ROOT}/scripts/region_ppc.py)
 endif()
 # The SteamOS launcher's hybrid-graphics part (NVIDIA PRIME render offload,
 # scripts/steamos/bundle/speedbreaker.sh) on made-up /sys, /proc and Vulkan

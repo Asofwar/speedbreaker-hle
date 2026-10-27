@@ -7,10 +7,12 @@
 // waits off to short sleeps, to park them while the game is suspended, and
 // to report, with NFSMW_LOG_D3D_WAIT=1, which counter they poll and how often.
 #include <stdafx.h>
+#include <region/region.h>
 #include <kernel/function.h>
 #include <cpu/guest_time.h>
 #include <cpu/host_cpu.h>
 #include <gpu/cp_doorbell.h>
+#include <cpu/backoff.h>
 #include "timeline.h"
 
 extern "C" PPC_FUNC(__imp__sub_825A5B20);
@@ -31,16 +33,21 @@ namespace
     // and Windows (the bell waits on WaitOnAddress there, and sleeps go
     // through compat/win/win_sleep.c's high-resolution timer); not macOS,
     // which coalesces default-QoS timers to ~10 ms (see the command
-    // processor's Worker). NFSMW_GPU_WAIT_BACKOFF=0 spins throughout, =50
-    // sleeps 50 us a poll as before.
+    // processor's Worker): there each poll sleeps 50 us (see backoff.h, which
+    // also covers macOS's stretched timers). NFSMW_GPU_WAIT_BACKOFF=0 spins
+    // throughout, =50 sleeps 50 us a poll as before.
     void BackOff()
     {
+        backoff::CountGpuWaitPoll();
 #if defined(__linux__) || defined(_WIN32)
         static const int mode = [] {
             const char* v = std::getenv("NFSMW_GPU_WAIT_BACKOFF");
             return !v ? 1 : v[0] == '0' ? 0 : std::atoi(v) == 50 ? 2 : 1;
         }();
         if (mode == 0)
+#else
+        if (!backoff::Enabled(backoff::kGpuWait))
+#endif
             return;
         using Clock = std::chrono::steady_clock;
         thread_local Clock::time_point lastPoll{}, waitStart{};
@@ -54,22 +61,25 @@ namespace
         seen = gpu::g_gpuProgress.Rings();
         if (now - waitStart < std::chrono::microseconds(20))
             return;
+#if defined(__linux__) || defined(_WIN32)
         hostcpu::TightenTimerSlack();
         if (mode == 2)
             std::this_thread::sleep_for(std::chrono::microseconds(50));
         else if (seen == rings)
             gpu::g_gpuProgress.Wait(rings, std::chrono::milliseconds(1));  // (else: rung since: check again at once)
         seen = gpu::g_gpuProgress.Rings();
-        lastPoll = Clock::now();
+#else
+        backoff::Sleep(backoff::kGpuWait, std::chrono::microseconds(50));
 #endif
+        lastPoll = Clock::now();
     }
 }
 
-PPC_FUNC(sub_825A5B20)
+SB_HOOK(sub_825A5B20)
 {
     // While the game is suspended the GPU work these loops wait for is held
     // back (Metal refuses it), and no guest time passes for the hang check:
-    // sleep through it instead of spinning a core (Apple has no back-off).
+    // sleep through it instead of spinning a core.
     guesttime::WaitWhileSuspended();
     if (timeline::g_enabled && !timeline::t_waitTargetMarked)
     {
@@ -97,5 +107,5 @@ PPC_FUNC(sub_825A5B20)
         }
     }
     BackOff();
-    __imp__sub_825A5B20(ctx, base);
+    SB_ORIGINAL(sub_825A5B20)(ctx, base);
 }

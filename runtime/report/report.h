@@ -120,6 +120,9 @@ namespace report
     // would lose every report's stack (and the system's own crash reporter
     // records an overflow there).
     void UseCrashStack();
+    // The recompiled functions' names again, for the release region::Select
+    // switched to (PrepareCrashReports took the USA's).
+    void RefreshGuestSymbols();
     // The crash handler (a signal handler; async-signal-safe): logs the
     // crash and writes the report. The caller exits afterwards.
 #ifdef _WIN32

@@ -1,5 +1,6 @@
 // SpeedBreaker runtime. GPL-3.0-or-later (see COPYING).
 #pragma once
+#include <region/region.h>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -192,5 +193,5 @@ inline std::filesystem::path GetSaveRootPath()
 
 inline std::filesystem::path GetSavePath(bool)
 {
-    return GetSaveRootPath() / "save";
+    return GetSaveRootPath() / (region::IsPalEs() ? "save-pal-es" : "save");
 }

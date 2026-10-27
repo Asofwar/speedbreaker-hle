@@ -12215,6 +12215,15 @@ void main()
                 mips ? "on" : "off", textures, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
         }
 
+        // Split screen (video::SplitScreenScale): at most Auto's scale while
+        // the game is in it. The Steam Machine at 3440x1440 and 3x (4.031x3)
+        // drew a split race's heavier scenes in 16.5-18 ms of GPU a frame and
+        // fell below 60 fps in 1-8 windows a run, v0.1.9 as v0.2.0 (the
+        // v0.2.0 fixes' A/B: which scenes a split race draws varies from run
+        // to run); single player unchanged. NFSMW_SPLIT_SCALE=0: the
+        // setting's scale in split screen too.
+        const bool s_splitScale = [] { const char* v = std::getenv("NFSMW_SPLIT_SCALE"); return !(v && v[0] == '0'); }();
+
         void ApplyLiveSettings()
         {
             uint64_t generation = settings::Generation();
@@ -12229,14 +12238,18 @@ void main()
                 return;
             int32_t setting = settings::GetInt(settings::Id::InternalResolution);
             uint32_t regionW = 0, regionH = 0;
+            const bool split = s_splitScale && SplitFrame();
             // Auto, and a setting's native rows or columns, follow the picture.
-            if (setting <= 0 || s_nativeShape)
+            if (setting <= 0 || s_nativeShape || split)
             {
                 video::FrameRegion(regionW, regionH);
                 if (regionW == 0 || regionH == 0)
                     return;  // no picture to size it for: keep the scale
             }
-            const gpu::RenderScale want = WantedRenderScale(setting, regionW, regionH);
+            gpu::RenderScale want = WantedRenderScale(setting, regionW, regionH);
+            const bool splitCapped = split && !(video::SplitScreenScale(want, regionW, regionH, s_scaleBudget) == want);
+            if (splitCapped)
+                want = video::SplitScreenScale(want, regionW, regionH, s_scaleBudget);
             if (want == s_renderScale)
             {
                 s_resolutionSetting = setting;
@@ -12257,7 +12270,7 @@ void main()
             }
             s_resolutionSetting = setting;
             s_autoSeen = 0;
-            ApplyRenderScale(want, ScaleReason(setting, regionW, regionH));
+            ApplyRenderScale(want, ScaleReason(setting, regionW, regionH) + (splitCapped ? ", split screen: at most Auto's" : ""));
         }
 
         // ---------------------------------------------------------------
@@ -16159,6 +16172,15 @@ void main()
         std::call_once(initialized, [] { glslang_initialize_process(); });
         glslang_stage_t stages[3] = { GLSLANG_STAGE_VERTEX, GLSLANG_STAGE_FRAGMENT, GLSLANG_STAGE_COMPUTE };
         return CompileGlsl(glsl, stages[std::clamp(stage, 0, 2)], log);
+    }
+
+    gpu::RenderScale InternalResolutionScale(int32_t setting, uint32_t regionW, uint32_t regionH)
+    {
+        // (s_scaleFixed and s_renderScale are set once, before the menu
+        // can be opened, while NFSMW_RENDER_SCALE holds.)
+        if (s_scaleFixed)
+            return s_renderScale;
+        return WantedRenderScale(setting, regionW, regionH);
     }
 
     void Shutdown()
