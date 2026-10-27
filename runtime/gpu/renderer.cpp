@@ -14784,8 +14784,9 @@ void main()
                 }
         if (s_logDrawsNow)
         {
-            std::string line = std::format("{}x{} vp s({:.1f},{:.1f}) o({:.1f},{:.1f}) sc({},{})-({},{}) vte{:03X} vs_{:016x} ps_{:016x} tex",
-                targetW, targetH, sx, sy, ox, oy, x0, y0, x1, y1, vte.value & 0xFFF, s_vs->hash, s_ps->hash);
+            std::string line = std::format("{}x{} vp s({:.1f},{:.1f}) o({:.1f},{:.1f}) sc({},{})-({},{}) vte{:03X} z{}{}f{} vs_{:016x} ps_{:016x} tex",
+                targetW, targetH, sx, sy, ox, oy, x0, y0, x1, y1, vte.value & 0xFFF, uint32_t(depthControl.z_enable),
+                uint32_t(depthControl.z_write_enable), uint32_t(depthControl.zfunc), s_vs->hash, s_ps->hash);
             for (uint32_t n = 0; n < 32; n++)
                 if ((s_ps->info.texture2DMask | s_ps->info.texture3DMask | s_ps->info.textureCubeMask) & (1u << n))
                     line += std::format(" {}:{:08X}", n, (s_regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + n * 6 + 1] & 0x1FFFF000u));
@@ -16276,13 +16277,16 @@ void main()
                     saving = false;
                 }).detach();
         }
-        // NFSMW_LOG_DRAWS=<seconds>: the first frame after that time.
-        static const double logDrawsSec = [] { const char* v = std::getenv("NFSMW_LOG_DRAWS"); return v ? std::atof(v) : -1.0; }();
+        // NFSMW_LOG_DRAWS=<seconds>: the first frame after that time;
+        // =f<frame>: that renderer frame (a replay's, the same in every run).
+        static const char* logDrawsVar = std::getenv("NFSMW_LOG_DRAWS");
+        static const bool logDrawsByFrame = logDrawsVar && logDrawsVar[0] == 'f';
+        static const double logDrawsSec = !logDrawsVar ? -1.0 : logDrawsByFrame ? std::atof(logDrawsVar + 1) : std::atof(logDrawsVar);
         static const auto launch = std::chrono::steady_clock::now();
         static bool loggedDraws = false;
         s_logDrawsNow = false;
-        if (logDrawsSec >= 0 && !loggedDraws &&
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - launch).count() >= logDrawsSec)
+        if (logDrawsSec >= 0 && !loggedDraws && (logDrawsByFrame ? double(frame) >= logDrawsSec :
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - launch).count() >= logDrawsSec))
         {
             loggedDraws = true;
             s_logDrawsNow = true;
