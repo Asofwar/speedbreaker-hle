@@ -190,7 +190,7 @@ namespace hid::touchlayout
         const float u = Unit(width, height, scale), m = 4.0f * u, y = m + 7.0f * u, r = 7.0f * u;
         return {
             Widget{ Kind::EditSwitch, 0, width * 0.5f - 17.0f * u, y, r, "LAYOUT" },
-            Widget{ Kind::EditReset, 0, width * 0.5f, y, r, "RESET" },
+            Widget{ Kind::EditReset, 0, width * 0.5f, y, r, "DEFAULTS" },
             Widget{ Kind::EditDone, 0, width * 0.5f + 17.0f * u, y, r, "DONE" },
         };
     }

@@ -118,7 +118,7 @@ namespace ui
             }
             if (!v.editBar.empty())
             {
-                const char* hint = "Drag the controls into place. DRIVING/MENUS: the other layout. RESET: its defaults. DONE: save.";
+                const char* hint = "Drag the controls into place. DRIVING/MENUS: the other layout. DEFAULTS: put them back. DONE: save.";
                 const float fontSize = ImGui::GetFontSize();
                 const ImVec2 size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, hint);
                 const ImVec2 at(display.x * 0.5f - size.x * 0.5f, (v.editBar[0].y + v.editBar[0].r) * sy + 0.6f * fontSize);

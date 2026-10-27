@@ -592,7 +592,7 @@ Stick), Button Steering (Normal: full lock in 0.14 s; Quick 0.08 s, Smooth 0.25 
 Taps; Off), Button Size (100%), Button Opacity (50%), and Tilt for Full Lock (25 degrees). A
 finger slides between the steering buttons, between gas and brake and along the D-pad without
 lifting. **Edit Layout** shows the controls to drag where your thumbs want them (and clear of the
-game's map and speedometer): DRIVING/MENUS switches to the other layout, RESET puts its controls
+game's map and speedometer): DRIVING/MENUS switches to the other layout, DEFAULTS puts its controls
 back, DONE saves them (`touch_layout.txt` beside `settings.toml`). While you drive the screen has the steering on the left and gas, brake, nitrous, the
 handbrake and Speedbreaker on the right, with the rear view, the camera, the reset after a crash
 and the pause along the top, as the game's own Controls page sets them; in the game's menus,
