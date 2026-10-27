@@ -418,16 +418,23 @@ namespace video
         // the folders (SB_NATIVE_LIB_DIR, SB_CODE_CACHE_DIR).
         bool LoadVulkan()
         {
+            // Turnip by default when the APK has it (scripts/android/build.sh,
+            // TURNIP); NFSMW_VK_DRIVER=system takes the phone's own driver.
             const char* driver = std::getenv("NFSMW_VK_DRIVER");
-            if (driver && std::strcmp(driver, "turnip") == 0)
+            const char* libDir = std::getenv("SB_NATIVE_LIB_DIR");
+            struct stat turnipFile{};
+            const bool packaged = libDir && stat((std::string(libDir) + "/libvulkan_freedreno.so").c_str(), &turnipFile) == 0;
+            if (driver ? std::strcmp(driver, "turnip") == 0 : packaged)
             {
-                const char* libDir = std::getenv("SB_NATIVE_LIB_DIR");
                 const char* cacheDir = std::getenv("SB_CODE_CACHE_DIR");
                 if (libDir && cacheDir)
                 {
                     const std::string libs = std::string(libDir) + "/";
                     const std::string tmp = std::string(cacheDir) + "/vulkan/";
                     mkdir(tmp.c_str(), 0700);
+                    // The swapchain's buffers linear: Turnip can't read the
+                    // vendor gralloc's layout of them (patches/mesa/0002).
+                    setenv("MESA_ANDROID_LINEAR_SWAPCHAIN", "1", 0);
                     void* handle = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, tmp.c_str(), libs.c_str(), libs.c_str(),
                         "libvulkan_freedreno.so", nullptr, nullptr);
                     auto gipa = handle ? reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(handle, "vkGetInstanceProcAddr")) : nullptr;

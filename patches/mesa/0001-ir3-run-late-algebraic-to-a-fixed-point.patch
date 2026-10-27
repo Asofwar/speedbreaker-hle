@@ -1,0 +1,26 @@
+ir3: run nir_opt_algebraic_late to a fixed point in ir3_context_init
+
+The late algebraic patterns fuse fadd(fmulz(a, b), c) into fmadz, and the
+same set lowers fmadz@32 with lower_fmulz_with_abs_min; one run creates the
+fmadz the next one would lower. ir3_nir.c runs the pass until no progress,
+ir3_context_init ran it once, so an fmadz could reach emit_alu ("Unhandled
+ALU op: fmadz", a failed assert: an Adreno 840 vertex shader of SpeedBreaker
+whose Xenos multiplications NIR turns into fmulz).
+
+diff --git a/src/freedreno/ir3/ir3_context.c b/src/freedreno/ir3/ir3_context.c
+index 1d6acf2..055eef1 100644
+--- a/src/freedreno/ir3/ir3_context.c
++++ b/src/freedreno/ir3/ir3_context.c
+@@ -95,7 +95,11 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader *shader,
+ 
+    /* nir_opt_algebraic() above would have unfused our ffmas, re-fuse them. */
+    if (needs_late_alg) {
+-      NIR_PASS(progress, ctx->s, nir_opt_algebraic_late);
++      bool late_progress;
++      do {
++         late_progress = false;
++         NIR_PASS(late_progress, ctx->s, nir_opt_algebraic_late);
++      } while (late_progress);
+       NIR_PASS(progress, ctx->s, nir_opt_dce);
+    }
+ 

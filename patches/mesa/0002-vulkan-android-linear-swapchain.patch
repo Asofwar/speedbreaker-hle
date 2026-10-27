@@ -1,0 +1,81 @@
+vulkan/android: MESA_ANDROID_LINEAR_SWAPCHAIN for a gralloc whose layout can't be read
+
+On a phone whose gralloc handle has no layout Mesa can read (Adreno 840,
+Android 17: no Qualcomm magic in the handle, no gralloc0 qcom module, no
+libui for IMapper 5) the fallback gralloc reports DRM_FORMAT_MOD_INVALID, and
+Turnip lays the swapchain image out as it likes while the gralloc made it
+compressed (UBWC) or tiled: the compositor shows garbage. With
+MESA_ANDROID_LINEAR_SWAPCHAIN=1 the swapchain asks for CPU-usable buffers,
+which the gralloc allocates linear and uncompressed, and the fallback takes an
+unreadable handle as linear. SpeedBreaker sets it when it loads Turnip.
+
+diff --git a/src/util/u_gralloc/u_gralloc_fallback.c b/src/util/u_gralloc/u_gralloc_fallback.c
+index 44fb32d..7c9f4bd 100644
+--- a/src/util/u_gralloc/u_gralloc_fallback.c
++++ b/src/util/u_gralloc/u_gralloc_fallback.c
+@@ -5,6 +5,7 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include "util/os_misc.h"
+ #include "u_gralloc_internal.h"
+ 
+ #include <hardware/gralloc.h>
+@@ -156,6 +157,14 @@ fallback_gralloc_get_buffer_info(struct u_gralloc *gralloc,
+    }
+ #endif
+ 
++   /* MESA_ANDROID_LINEAR_SWAPCHAIN=1 asked the gralloc for buffers a CPU can
++    * read and write (vk_android.c), which it allocates linear: a handle whose
++    * layout can't be read (no Qualcomm magic above) is taken as such.
++    */
++   if (out->modifier == DRM_FORMAT_MOD_INVALID && os_get_option("MESA_ANDROID_LINEAR_SWAPCHAIN") &&
++       os_get_option("MESA_ANDROID_LINEAR_SWAPCHAIN")[0] == '1')
++      out->modifier = DRM_FORMAT_MOD_LINEAR;
++
+    return 0;
+ }
+ 
+diff --git a/src/vulkan/runtime/vk_android.c b/src/vulkan/runtime/vk_android.c
+index 32ff550..5f0a4fd 100644
+--- a/src/vulkan/runtime/vk_android.c
++++ b/src/vulkan/runtime/vk_android.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include "vk_android.h"
++#include "util/os_misc.h"
+ 
+ #include "vk_alloc.h"
+ #include "vk_common_entrypoints.h"
+@@ -453,6 +454,11 @@ setup_gralloc0_usage(VkFormat format, VkImageUsageFlags image_usage,
+    if (!gralloc_usage)
+       return VK_ERROR_FORMAT_NOT_SUPPORTED;
+ 
++   /* (MESA_ANDROID_LINEAR_SWAPCHAIN: see GetSwapchainGrallocUsage2ANDROID.) */
++   if (os_get_option("MESA_ANDROID_LINEAR_SWAPCHAIN") &&
++       os_get_option("MESA_ANDROID_LINEAR_SWAPCHAIN")[0] == '1')
++      gralloc_usage |= GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN;
++
+    *out_gralloc_usage = gralloc_usage;
+ 
+    return VK_SUCCESS;
+@@ -663,6 +669,18 @@ vk_common_GetSwapchainGrallocUsage2ANDROID(
+    if (swapchainImageUsage & VK_SWAPCHAIN_IMAGE_USAGE_SHARED_BIT_ANDROID)
+       *grallocProducerUsage |= vk_android_get_front_buffer_usage();
+ 
++   /* MESA_ANDROID_LINEAR_SWAPCHAIN=1: buffers a CPU could read and write, which
++    * a vendor gralloc allocates linear and uncompressed. For a driver that can't
++    * read the vendor gralloc's layout (no metadata API it can use: its fallback
++    * takes every buffer as linear), while the gralloc would otherwise choose a
++    * compressed or tiled one (Qualcomm's UBWC) for GPU rendering.
++    */
++   if (os_get_option("MESA_ANDROID_LINEAR_SWAPCHAIN") &&
++       os_get_option("MESA_ANDROID_LINEAR_SWAPCHAIN")[0] == '1') {
++      *grallocProducerUsage |= GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN;
++      *grallocConsumerUsage |= GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN;
++   }
++
+    return VK_SUCCESS;
+ }
+ 

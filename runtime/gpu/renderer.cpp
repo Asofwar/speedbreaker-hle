@@ -3178,6 +3178,11 @@ float shadowPcssSample(sampler2D shadowMap, vec2 uv, float receiverDepth, int gr
             if (s_vk->integratedGpuDefaults)
                 s_scaleBudget = 1;
 #endif
+#ifdef __ANDROID__
+            // Android phones: Auto at 1x. An Adreno 840 (Turnip) in a Quick
+            // Race: 26-29 fps at Auto's 2x2 (GPU 35-39 ms a frame), 40-45 at 1x.
+            s_scaleBudget = 1;
+#endif
 #if defined(__APPLE__) && TARGET_OS_IOS
             // iPhones and iPads: chip by chip (video/scale_budget), more than
             // 1x1 only where a chip was measured to hold a race at 60 fps with
